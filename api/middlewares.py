@@ -1,6 +1,6 @@
 from fastapi import Request, HTTPException
-from api.config.env import config
-from api.utils.logger import logger
+from .config import config
+from .utils import logger
 
 async def require_api_key(request: Request):
     logger.debug("Auth middleware triggered for API key check.")
