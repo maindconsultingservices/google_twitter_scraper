@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+python-dotenv==1.0.1
+requests==2.32.3
+httpx==0.28.1
+pyotp==2.9.0
+twitter-api-client==0.10.22
+googlesearch-python==1.3.0
+beautifulsoup4==4.12.3
+httptools==0.6.4
+cloudscraper==1.2.71
