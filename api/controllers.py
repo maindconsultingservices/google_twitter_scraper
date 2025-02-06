@@ -14,13 +14,10 @@ async def google_search_controller(query: str, max_results: int):
     """
     logger.info("Controller: google_search_controller called",
                 extra={"query": query, "max_results": max_results})
-
     if not query:
         raise HTTPException(status_code=400, detail="Missing query parameter.")
-
     if max_results < 1 or max_results > 1000:
         raise HTTPException(status_code=400, detail="max_results must be between 1 and 1000.")
-
     try:
         results = await google_service.google_search(query, max_results)
         return {"results": results}
@@ -29,7 +26,6 @@ async def google_search_controller(query: str, max_results: int):
                      exc_info=True,
                      extra={"error": str(e)})
         raise HTTPException(status_code=500, detail="Failed to perform google search.")
-
 
 #
 # TWITTER controller
@@ -98,15 +94,15 @@ async def fetch_mentions(request: Request):
                      extra={"error": str(e)})
         raise HTTPException(status_code=500, detail="Failed to fetch mentions.")
 
-
-# Write / Mutate
+#
+# WRITE / MUTATE
+#
 async def post_new_tweet(body: dict):
     logger.info("Controller: postNewTweet called.", extra={"body": body})
     try:
         text = body.get("text")
         if not text:
             raise HTTPException(status_code=400, detail="Missing text field.")
-
         tweet_id = await twitter_service.post_tweet(text)
         if not tweet_id:
             raise HTTPException(status_code=500, detail="Failed to post tweet.")
@@ -124,7 +120,6 @@ async def reply_to_tweet(body: dict):
         in_reply_to_id = body.get("inReplyToId")
         if not text or not in_reply_to_id:
             raise HTTPException(status_code=400, detail="Missing text or inReplyToId field.")
-
         tweet_id = await twitter_service.post_tweet(text, in_reply_to_id)
         if not tweet_id:
             raise HTTPException(status_code=500, detail="Failed to post reply.")
@@ -142,7 +137,6 @@ async def quote_tweet(body: dict):
         quote_id = body.get("quoteId")
         if not text or not quote_id:
             raise HTTPException(status_code=400, detail="Missing text or quoteId field.")
-
         tweet_id = await twitter_service.post_quote_tweet(text, quote_id)
         if not tweet_id:
             raise HTTPException(status_code=500, detail="Failed to post quote tweet.")
@@ -159,7 +153,6 @@ async def retweet(body: dict):
         tweet_id = body.get("tweetId")
         if not tweet_id:
             raise HTTPException(status_code=400, detail="Missing tweetId field.")
-
         success = await twitter_service.retweet(tweet_id)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to retweet.")
@@ -176,7 +169,6 @@ async def like_tweet(body: dict):
         tweet_id = body.get("tweetId")
         if not tweet_id:
             raise HTTPException(status_code=400, detail="Missing tweetId field.")
-
         success = await twitter_service.like_tweet(tweet_id)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to like tweet.")
@@ -187,23 +179,15 @@ async def like_tweet(body: dict):
                      extra={"error": str(e)})
         raise HTTPException(status_code=500, detail="Failed to like tweet.")
 
-
 #
 # WEB controller
 #
 async def scrape_urls_controller(urls: List[str]):
-    """
-    Controller to handle scraping of one or several URLs via BeautifulSoup4 + cloudscraper.
-    """
-    logger.info("Controller: scrape_urls_controller called",
-                extra={"num_urls": len(urls)})
-
+    logger.info("Controller: scrape_urls_controller called", extra={"num_urls": len(urls)})
     if not urls:
         raise HTTPException(status_code=400, detail="No URLs provided.")
-
     if len(urls) > 100:
         raise HTTPException(status_code=400, detail="Too many URLs. Maximum is 100.")
-
     try:
         scraped_data = await web_service.scrape_urls(urls)
         return {"scraped": scraped_data}
