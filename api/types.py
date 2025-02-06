@@ -14,7 +14,7 @@ class Tweet(BaseModel):
     timestamp: int  # in seconds
     permanentUrl: str
 
-    # New fields capturing additional tweet stats
+    # Additional tweet stats
     quoteCount: int
     replyCount: int
     retweetCount: int
@@ -26,6 +26,7 @@ class SearchMode(str, Enum):
     People = "People"
     Photos = "Photos"
     Videos = "Videos"
+
 
 class QueryTweetsResponse(BaseModel):
     tweets: List[Tweet]
