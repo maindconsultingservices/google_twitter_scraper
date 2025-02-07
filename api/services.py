@@ -8,6 +8,7 @@ from googlesearch import search
 import cloudscraper
 from bs4 import BeautifulSoup
 import httpx
+import re  # Added to enable removal of <think> tokens
 
 from twitter.account import Account
 from twitter.scraper import Scraper
@@ -884,6 +885,7 @@ class WebService:
     async def summarize_text(self, text: str) -> str:
         """
         Calls the Venice.ai API to get a concise summary of the provided text.
+        If the returned summary contains any <think>...</think> tokens, they are removed.
         """
         if not text or len(text) < 20:
             return ""
@@ -910,6 +912,8 @@ class WebService:
             summary = ""
             if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
                 summary = data["choices"][0].get("message", {}).get("content", "")
+                # Remove any <think>...</think> tokens if present
+                summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL).strip()
             return summary
         except Exception as e:
             logger.error("Error summarizing text", extra={"error": str(e)})
