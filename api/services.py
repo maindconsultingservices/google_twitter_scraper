@@ -803,6 +803,8 @@ class TwitterService:
 
         return found
 
+twitter_service = TwitterService()
+
 #
 # WEB service (merged from web_service.py)
 #
