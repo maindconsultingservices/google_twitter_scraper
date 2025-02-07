@@ -191,7 +191,7 @@ class TwitterClientManager:
         if not self._search:
             logger.debug("No existing Search instance; creating a new one.")
             logger.info("Creating Search instance for advanced queries.")
-            self.get_account()  # ensure Account is initialized
+            self.get_account()  # ensure the Account is initialized
 
             console_only_logger = {
                 "version": 1,
@@ -892,8 +892,8 @@ class WebService:
         payload = {
             "model": config.venice_model,
             "messages": [
-                {"role": "system", "content": "Be precise"},
-                {"role": "user", "content": f"Please provide a concise summary for the following text:\n\n{text}"}
+                {"role": "system", "content": config.system_prompt},
+                {"role": "user", "content": text}
             ],
             "venice_parameters": {
                 "include_venice_system_prompt": False
