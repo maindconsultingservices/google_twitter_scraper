@@ -7,6 +7,7 @@ from fastapi.concurrency import run_in_threadpool
 from googlesearch import search
 import cloudscraper
 from bs4 import BeautifulSoup
+import httpx
 
 from twitter.account import Account
 from twitter.scraper import Scraper
@@ -802,9 +803,6 @@ class TwitterService:
 
         return found
 
-twitter_service = TwitterService()
-
-
 #
 # WEB service (merged from web_service.py)
 #
@@ -837,6 +835,7 @@ class WebService:
                 "metaDescription": None,
                 "textPreview": None,
                 "fullText": None,
+                "Summary": None
             }
 
             try:
@@ -864,6 +863,9 @@ class WebService:
                     if full_text:
                         single_result["textPreview"] = full_text[:200]
                         single_result["fullText"] = full_text
+                        # New: Get summary from Venice.ai API
+                        summary = await self.summarize_text(full_text)
+                        single_result["Summary"] = summary
                 else:
                     single_result["error"] = f"Non-200 status code: {response.status_code}"
 
@@ -876,5 +878,39 @@ class WebService:
             results.append(single_result)
 
         return results
+
+    async def summarize_text(self, text: str) -> str:
+        """
+        Calls the Venice.ai API to get a concise summary of the provided text.
+        """
+        if not text or len(text) < 20:
+            return ""
+        payload = {
+            "model": config.venice_model,
+            "messages": [
+                {"role": "system", "content": "Be precise"},
+                {"role": "user", "content": f"Please provide a concise summary for the following text:\n\n{text}"}
+            ],
+            "venice_parameters": {
+                "include_venice_system_prompt": False
+            },
+            "temperature": config.venice_temperature
+        }
+        headers = {
+            "Authorization": f"Bearer {config.venice_api_key}",
+            "Content-Type": "application/json"
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(config.venice_url, json=payload, headers=headers, timeout=30.0)
+            response.raise_for_status()
+            data = response.json()
+            summary = ""
+            if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
+                summary = data["choices"][0].get("message", {}).get("content", "")
+            return summary
+        except Exception as e:
+            logger.error("Error summarizing text", extra={"error": str(e)})
+            return ""
 
 web_service = WebService()
