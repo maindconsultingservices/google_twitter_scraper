@@ -25,34 +25,51 @@ from .utils import logger
 #
 class RateLimiter:
     """
-    Simple in-memory rate limiter that allows `max_requests` in `window_ms` timeframe.
-    If the limit is exceeded, it raises an Exception.
+    Distributed rate limiter that allows `max_requests` in `window_ms` timeframe.
+    Uses Redis for distributed rate limiting if REDIS_URL is set in config,
+    otherwise falls back to in-memory rate limiting.
     """
     def __init__(self, max_requests: int, window_ms: int):
         self.max_requests = max_requests
         self.window_ms = window_ms
         self.queue = []
+        self.redis_client = None
+        if config.redis_url:
+            try:
+                import redis.asyncio as redis_asyncio
+                self.redis_client = redis_asyncio.from_url(config.redis_url)
+                logger.debug("Distributed rate limiter enabled with Redis.", extra={"redis_url": config.redis_url})
+            except Exception as e:
+                logger.error("Failed to initialize Redis client for rate limiting. Falling back to in-memory.", extra={"error": str(e)})
 
-    def check(self):
-        logger.debug("RateLimiter check initiated.", extra={
-            "maxRequests": self.max_requests,
-            "windowMs": self.window_ms,
-            "currentQueueLength": len(self.queue),
-        })
+    async def check(self):
+        if self.redis_client:
+            now = int(time.time() * 1000)
+            window = now // self.window_ms
+            key = f"rate_limiter:{id(self)}:{window}"
+            try:
+                count = await self.redis_client.incr(key)
+                if count == 1:
+                    await self.redis_client.expire(key, self.window_ms // 1000)
+                if count > self.max_requests:
+                    logger.warning("Rate limit exceeded (distributed).", extra={"key": key, "count": count})
+                    raise Exception("Rate limit exceeded. Please try again later.")
+                return
+            except Exception as e:
+                logger.error("Error in distributed rate limiter, falling back to in-memory.", extra={"error": str(e)})
+                self._in_memory_check(now)
+        else:
+            self._in_memory_check(int(time.time() * 1000))
 
-        now = int(time.time() * 1000)
-        # Remove requests older than windowMs
+    def _in_memory_check(self, now: int):
+        # Remove requests older than window_ms
         while self.queue and (now - self.queue[0] > self.window_ms):
             self.queue.pop(0)
-
         if len(self.queue) >= self.max_requests:
-            logger.warning("Rate limit exceeded.")
+            logger.warning("Rate limit exceeded (in-memory).", extra={"currentQueueLength": len(self.queue)})
             raise Exception("Rate limit exceeded. Please try again later.")
-
         self.queue.append(now)
-        logger.debug("RateLimiter check passed.", extra={
-            "newQueueLength": len(self.queue)
-        })
+        logger.debug("RateLimiter check passed (in-memory).", extra={"newQueueLength": len(self.queue)})
 
 
 #
@@ -67,17 +84,25 @@ class GoogleService:
         self.rate_limiter_google = RateLimiter(10, 60_000)
 
     async def google_search(self, query: str, max_results: int) -> List[str]:
-        logger.debug("GoogleService: google_search called",
-                     extra={"query": query, "max_results": max_results})
-        self.rate_limiter_google.check()
+        logger.debug("GoogleService: google_search called", extra={"query": query, "max_results": max_results})
+        await self.rate_limiter_google.check()
+        # Check cache first if Redis is available
+        cache_key = f"google_search:{query}:{max_results}"
+        if self.rate_limiter_google.redis_client:
+            cached = await self.rate_limiter_google.redis_client.get(cache_key)
+            if cached:
+                logger.debug("Returning cached Google search results", extra={"cache_key": cache_key})
+                return json.loads(cached)
         try:
             # googlesearch is synchronous, so we run it in a threadpool
             results = await run_in_threadpool(lambda: list(search(query, num_results=max_results)))
+            # Cache the result for 60 seconds if Redis is available
+            if self.rate_limiter_google.redis_client:
+                await self.rate_limiter_google.redis_client.set(cache_key, json.dumps(results), ex=60)
             return results
         except Exception as e:
             tb = traceback.format_exc()
-            logger.error("Error in google_search method",
-                         extra={"error": str(e), "traceback": tb})
+            logger.error("Error in google_search method", extra={"error": str(e), "traceback": tb})
             raise
 
 google_service = GoogleService()
@@ -292,7 +317,7 @@ class TwitterService:
     # ================== READ methods =====================
     async def get_user_tweets(self, user_id: str, count: int) -> List[Tweet]:
         logger.debug("Service: get_user_tweets invoked", extra={"user_id": user_id, "count": count})
-        self.rate_limiter.check()
+        await self.rate_limiter.check()
         await self._ensure_login()
 
         scraper = twitter_client_manager.get_scraper()
@@ -302,7 +327,7 @@ class TwitterService:
 
     async def fetch_home_timeline(self, count: int) -> List[Tweet]:
         logger.debug("Service: fetch_home_timeline invoked", extra={"count": count})
-        self.rate_limiter.check()
+        await self.rate_limiter.check()
         await self._ensure_login()
 
         account = twitter_client_manager.get_account()
@@ -318,7 +343,7 @@ class TwitterService:
 
     async def fetch_following_timeline(self, count: int) -> List[Tweet]:
         logger.debug("Service: fetch_following_timeline invoked", extra={"count": count})
-        self.rate_limiter.check()
+        await self.rate_limiter.check()
         await self._ensure_login()
 
         account = twitter_client_manager.get_account()
@@ -334,7 +359,7 @@ class TwitterService:
 
     async def fetch_search_tweets(self, query: str, max_tweets: int, mode: str) -> QueryTweetsResponse:
         logger.debug("Service: fetch_search_tweets called", extra={"query": query, "max_tweets": max_tweets, "mode": mode})
-        self.rate_limiter.check()
+        await self.rate_limiter.check()
         await self._ensure_login()
 
         search_client = twitter_client_manager.get_search()
@@ -411,7 +436,7 @@ class TwitterService:
     # ================== WRITE methods =====================
     async def post_tweet(self, text: str, in_reply_to_id: str = None) -> str | None:
         logger.debug("Service: post_tweet called", extra={"text": text, "inReplyToId": in_reply_to_id})
-        self.rate_limiter.check()
+        await self.rate_limiter.check()
         await self._ensure_login()
 
         account = twitter_client_manager.get_account()
@@ -429,7 +454,7 @@ class TwitterService:
 
     async def post_quote_tweet(self, text: str, quote_id: str) -> str | None:
         logger.debug("Service: post_quote_tweet called", extra={"text": text, "quoteId": quote_id})
-        self.rate_limiter.check()
+        await self.rate_limiter.check()
         await self._ensure_login()
 
         account = twitter_client_manager.get_account()
@@ -444,7 +469,7 @@ class TwitterService:
 
     async def retweet(self, tweet_id: str) -> bool:
         logger.debug("Service: retweet called", extra={"tweetId": tweet_id})
-        self.rate_limiter.check()
+        await self.rate_limiter.check()
         await self._ensure_login()
 
         account = twitter_client_manager.get_account()
@@ -459,7 +484,7 @@ class TwitterService:
 
     async def like_tweet(self, tweet_id: str) -> bool:
         logger.debug("Service: like_tweet called", extra={"tweetId": tweet_id})
-        self.rate_limiter.check()
+        await self.rate_limiter.check()
         await self._ensure_login()
 
         account = twitter_client_manager.get_account()
@@ -832,6 +857,12 @@ class WebService:
             "fullText": None,
             "Summary": None
         }
+        # Check cache if available using the same Redis client from the rate limiter
+        if self.rate_limiter.redis_client:
+            cached = await self.rate_limiter.redis_client.get(f"scrape:{url}")
+            if cached:
+                logger.debug("Returning cached scrape result", extra={"url": url})
+                return json.loads(cached)
         try:
             response = await run_in_threadpool(lambda: self.scraper.get(url, timeout=10))
             single_result["status"] = response.status_code
@@ -855,14 +886,21 @@ class WebService:
             logger.error("Error scraping URL",
                          extra={"url": url, "error": str(exc), "traceback": tb})
             single_result["error"] = str(exc)
+        # Cache the result for 60 seconds if Redis is available
+        if self.rate_limiter.redis_client:
+            await self.rate_limiter.redis_client.set(f"scrape:{url}", json.dumps(single_result), ex=60)
         return single_result
 
     async def scrape_urls(self, urls: List[str]) -> List[Dict[str, Any]]:
         logger.debug("WebService: scrape_urls called", extra={"urls": urls})
         # Rate-limit for scraping calls
-        self.rate_limiter.check()
-        tasks = [self._scrape_single_url(url) for url in urls]
-        results = await asyncio.gather(*tasks)
+        await self.rate_limiter.check()
+        # Limit concurrency with a semaphore
+        sem = asyncio.Semaphore(10)
+        async def sem_scrape(url):
+            async with sem:
+                return await self._scrape_single_url(url)
+        results = await asyncio.gather(*(sem_scrape(url) for url in urls))
         return results
 
     async def summarize_text(self, text: str) -> str:
