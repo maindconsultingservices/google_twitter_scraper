@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, Query
 from typing import List
 from pydantic import BaseModel
 
@@ -32,12 +32,16 @@ async def google_search_route(
     user_request: Request,
     query: str,
     max_results: int = 10,
+    sites: List[str] = Query(None),
     _=Depends(require_api_key)
 ):
     """
     GET /google/search => run google_search_controller
+    Optionally restricts the search to one or several sites by using the "sites" query parameter.
     """
-    logger.debug("Route GET /google/search called", extra={"query": query, "max_results": max_results})
+    logger.debug("Route GET /google/search called", extra={"query": query, "max_results": max_results, "sites": sites})
+    if sites:
+        query = f"{query} " + " ".join(f"site:{s}" for s in sites)
     return await google_search_controller(query, max_results)
 
 
@@ -117,5 +121,4 @@ async def scrape_urls_route(
         logger.debug(f"Request client host: {request.client.host}")
     raw_body = await request.body()
     logger.debug(f"Raw request body (decoded): {raw_body.decode('utf-8', errors='replace')}")
-
     return await scrape_urls_controller(body.urls)
