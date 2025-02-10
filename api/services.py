@@ -1,6 +1,7 @@
 import time
 import json
 import traceback
+import asyncio
 from typing import List, Dict, Any
 
 from fastapi.concurrency import run_in_threadpool
@@ -403,7 +404,6 @@ class TwitterService:
         if not username:
             logger.warning("fetchMentions: Twitter not logged in.")
             return QueryTweetsResponse(tweets=[])
-
         count = 10
         search_results = await self.fetch_search_tweets(f"@{username}", count, SearchMode.Latest.value)
         return search_results
@@ -821,65 +821,48 @@ class WebService:
         # This session will handle CF challenge flows automatically
         self.scraper = cloudscraper.create_scraper()
 
+    async def _scrape_single_url(self, url: str) -> Dict[str, Any]:
+        single_result = {
+            "url": url,
+            "status": None,
+            "error": None,
+            "title": None,
+            "metaDescription": None,
+            "textPreview": None,
+            "fullText": None,
+            "Summary": None
+        }
+        try:
+            response = await run_in_threadpool(lambda: self.scraper.get(url, timeout=10))
+            single_result["status"] = response.status_code
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, "html.parser")
+                title_tag = soup.find("title")
+                single_result["title"] = title_tag.get_text(strip=True) if title_tag else None
+                desc_tag = soup.find("meta", attrs={"name": "description"})
+                if desc_tag and desc_tag.get("content"):
+                    single_result["metaDescription"] = desc_tag["content"].strip()
+                full_text = soup.get_text(separator=" ", strip=True)
+                if full_text:
+                    single_result["textPreview"] = full_text[:200]
+                    single_result["fullText"] = full_text
+                    summary = await self.summarize_text(full_text)
+                    single_result["Summary"] = summary
+            else:
+                single_result["error"] = f"Non-200 status code: {response.status_code}"
+        except Exception as exc:
+            tb = traceback.format_exc()
+            logger.error("Error scraping URL",
+                         extra={"url": url, "error": str(exc), "traceback": tb})
+            single_result["error"] = str(exc)
+        return single_result
+
     async def scrape_urls(self, urls: List[str]) -> List[Dict[str, Any]]:
         logger.debug("WebService: scrape_urls called", extra={"urls": urls})
-
         # Rate-limit for scraping calls
         self.rate_limiter.check()
-
-        results = []
-
-        for url in urls:
-            single_result = {
-                "url": url,
-                "status": None,
-                "error": None,
-                "title": None,
-                "metaDescription": None,
-                "textPreview": None,
-                "fullText": None,
-                "Summary": None
-            }
-
-            try:
-                # Because cloudscraper is synchronous, run it in a threadpool
-                response = await run_in_threadpool(
-                    lambda: self.scraper.get(url, timeout=10)
-                )
-                single_result["status"] = response.status_code
-
-                if response.status_code == 200:
-                    soup = BeautifulSoup(response.text, "html.parser")
-
-                    # Extract title if present
-                    title_tag = soup.find("title")
-                    single_result["title"] = title_tag.get_text(strip=True) if title_tag else None
-
-                    # Extract meta description if present
-                    desc_tag = soup.find("meta", attrs={"name": "description"})
-                    if desc_tag and desc_tag.get("content"):
-                        single_result["metaDescription"] = desc_tag["content"].strip()
-
-                    # Get the entire text
-                    full_text = soup.get_text(separator=" ", strip=True)
-
-                    if full_text:
-                        single_result["textPreview"] = full_text[:200]
-                        single_result["fullText"] = full_text
-                        # New: Get summary from Venice.ai API
-                        summary = await self.summarize_text(full_text)
-                        single_result["Summary"] = summary
-                else:
-                    single_result["error"] = f"Non-200 status code: {response.status_code}"
-
-            except Exception as exc:
-                tb = traceback.format_exc()
-                logger.error("Error scraping URL",
-                             extra={"url": url, "error": str(exc), "traceback": tb})
-                single_result["error"] = str(exc)
-
-            results.append(single_result)
-
+        tasks = [self._scrape_single_url(url) for url in urls]
+        results = await asyncio.gather(*tasks)
         return results
 
     async def summarize_text(self, text: str) -> str:
