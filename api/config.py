@@ -13,5 +13,6 @@ class Config:
     venice_url = os.getenv("VENICE_URL", "")
     venice_temperature = float(os.getenv("VENICE_TEMPERATURE", "0.2"))
     system_prompt = os.getenv("SYSTEM_PROMPT", "Be precise")
+    redis_url = os.getenv("REDIS_URL", "")
 
 config = Config()
