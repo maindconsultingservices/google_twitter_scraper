@@ -38,11 +38,15 @@ async def google_search_route(
     """
     GET /google/search => run google_search_controller
     Optionally restricts the search to one or several sites by using the "sites" query parameter.
-    When multiple sites are provided, they are joined using the OR operator.
+    When multiple sites are provided, they are grouped using parentheses and joined with the OR operator.
     """
     logger.debug("Route GET /google/search called", extra={"query": query, "max_results": max_results, "sites": sites})
     if sites:
-        query = f"{query} " + " OR ".join(f"site:{s}" for s in sites)
+        if len(sites) > 1:
+            sites_query = "(" + " OR ".join(f"site:{s}" for s in sites) + ")"
+        else:
+            sites_query = f"site:{sites[0]}"
+        query = f"{query} {sites_query}"
     return await google_search_controller(query, max_results)
 
 
