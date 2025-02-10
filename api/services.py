@@ -62,7 +62,7 @@ class RateLimiter:
             self._in_memory_check(int(time.time() * 1000))
 
     def _in_memory_check(self, now: int):
-        # Remove requests older than window_ms
+        # Remove requests older than windowMs
         while self.queue and (now - self.queue[0] > self.window_ms):
             self.queue.pop(0)
         if len(self.queue) >= self.max_requests:
@@ -86,19 +86,24 @@ class GoogleService:
     async def google_search(self, query: str, max_results: int) -> List[str]:
         logger.debug("GoogleService: google_search called", extra={"query": query, "max_results": max_results})
         await self.rate_limiter_google.check()
-        # Check cache first if Redis is available
         cache_key = f"google_search:{query}:{max_results}"
         if self.rate_limiter_google.redis_client:
-            cached = await self.rate_limiter_google.redis_client.get(cache_key)
+            try:
+                cached = await self.rate_limiter_google.redis_client.get(cache_key)
+            except Exception as e:
+                logger.error("Redis error in google search caching get", extra={"error": str(e)})
+                cached = None
             if cached:
                 logger.debug("Returning cached Google search results", extra={"cache_key": cache_key})
                 return json.loads(cached)
         try:
             # googlesearch is synchronous, so we run it in a threadpool
             results = await run_in_threadpool(lambda: list(search(query, num_results=max_results)))
-            # Cache the result for 60 seconds if Redis is available
             if self.rate_limiter_google.redis_client:
-                await self.rate_limiter_google.redis_client.set(cache_key, json.dumps(results), ex=60)
+                try:
+                    await self.rate_limiter_google.redis_client.set(cache_key, json.dumps(results), ex=60)
+                except Exception as e:
+                    logger.error("Redis error in google search caching set", extra={"error": str(e)})
             return results
         except Exception as e:
             tb = traceback.format_exc()
@@ -857,9 +862,12 @@ class WebService:
             "fullText": None,
             "Summary": None
         }
-        # Check cache if available using the same Redis client from the rate limiter
         if self.rate_limiter.redis_client:
-            cached = await self.rate_limiter.redis_client.get(f"scrape:{url}")
+            try:
+                cached = await self.rate_limiter.redis_client.get(f"scrape:{url}")
+            except Exception as e:
+                logger.error("Redis error in caching get", extra={"error": str(e)})
+                cached = None
             if cached:
                 logger.debug("Returning cached scrape result", extra={"url": url})
                 return json.loads(cached)
@@ -886,16 +894,16 @@ class WebService:
             logger.error("Error scraping URL",
                          extra={"url": url, "error": str(exc), "traceback": tb})
             single_result["error"] = str(exc)
-        # Cache the result for 60 seconds if Redis is available
         if self.rate_limiter.redis_client:
-            await self.rate_limiter.redis_client.set(f"scrape:{url}", json.dumps(single_result), ex=60)
+            try:
+                await self.rate_limiter.redis_client.set(f"scrape:{url}", json.dumps(single_result), ex=60)
+            except Exception as e:
+                logger.error("Redis error in caching set", extra={"error": str(e)})
         return single_result
 
     async def scrape_urls(self, urls: List[str]) -> List[Dict[str, Any]]:
         logger.debug("WebService: scrape_urls called", extra={"urls": urls})
-        # Rate-limit for scraping calls
         await self.rate_limiter.check()
-        # Limit concurrency with a semaphore
         sem = asyncio.Semaphore(10)
         async def sem_scrape(url):
             async with sem:
@@ -933,7 +941,6 @@ class WebService:
             summary = ""
             if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
                 summary = data["choices"][0].get("message", {}).get("content", "")
-                # Remove any <think>...</think> tokens if present
                 summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL).strip()
             return summary
         except Exception as e:
