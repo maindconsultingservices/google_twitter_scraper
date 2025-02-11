@@ -10,6 +10,7 @@ import cloudscraper
 from bs4 import BeautifulSoup
 import httpx
 import re  # Added to enable removal of <think> tokens
+from requests.exceptions import HTTPError
 
 from twitter.account import Account
 from twitter.scraper import Scraper
@@ -83,6 +84,25 @@ class GoogleService:
     def __init__(self):
         self.rate_limiter_google = RateLimiter(10, 60_000)
 
+    async def _search_with_retries(self, query: str, max_results: int) -> List[str]:
+        max_attempts = 3
+        delay = 1
+        for attempt in range(max_attempts):
+            try:
+                return await run_in_threadpool(lambda: list(search(query, num_results=max_results)))
+            except HTTPError as http_err:
+                if http_err.response is not None and http_err.response.status_code == 429:
+                    logger.warning("HTTP 429 received from Google search. Attempt %d/%d", attempt + 1, max_attempts)
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(delay)
+                        delay *= 2
+                        continue
+                    else:
+                        logger.error("Max retries reached for Google search. Raising error.")
+                        raise
+                else:
+                    raise
+
     async def google_search(self, query: str, max_results: int) -> List[str]:
         logger.debug("GoogleService: google_search called", extra={"query": query, "max_results": max_results})
         await self.rate_limiter_google.check()
@@ -97,8 +117,8 @@ class GoogleService:
                 logger.debug("Returning cached Google search results", extra={"cache_key": cache_key})
                 return json.loads(cached)
         try:
-            # googlesearch is synchronous, so we run it in a threadpool
-            results = await run_in_threadpool(lambda: list(search(query, num_results=max_results)))
+            # Use the retry-enabled search method instead of a single call
+            results = await self._search_with_retries(query, max_results)
             if self.rate_limiter_google.redis_client:
                 try:
                     await self.rate_limiter_google.redis_client.set(cache_key, json.dumps(results), ex=60)
@@ -835,6 +855,7 @@ class TwitterService:
         return found
 
 twitter_service = TwitterService()
+
 
 #
 # WEB service (merged from web_service.py)
