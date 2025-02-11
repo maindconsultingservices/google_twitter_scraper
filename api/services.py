@@ -79,10 +79,53 @@ class RateLimiter:
 class GoogleService:
     """
     Service layer for performing Google searches using the googlesearch library.
-    Includes a rate limiter to prevent excessive calls.
+    Includes a rate limiter to prevent excessive calls and a distributed queue mechanism
+    to uniformly space out requests over time.
     """
     def __init__(self):
         self.rate_limiter_google = RateLimiter(10, 60_000)
+
+    async def _acquire_google_search_slot(self):
+        """
+        Uses a Redis-backed (or in-memory fallback) distributed queue mechanism to
+        enforce a minimum interval (1 second) between successive Google search calls.
+        """
+        min_interval = 1.0  # seconds between calls; adjust as needed
+        key = "google:next_allowed"
+        if self.rate_limiter_google.redis_client:
+            client = self.rate_limiter_google.redis_client
+            now = time.time()
+            script = """
+            local now = tonumber(ARGV[1])
+            local min_interval = tonumber(ARGV[2])
+            local key = KEYS[1]
+            local next_allowed = tonumber(redis.call("get", key) or "0")
+            if now < next_allowed then
+                return next_allowed - now
+            else
+                local new_next = now + min_interval
+                redis.call("set", key, new_next)
+                return 0
+            end
+            """
+            wait_time = await client.eval(script, 1, key, now, min_interval)
+            wait_time = float(wait_time)
+            if wait_time > 0:
+                logger.debug("Distributed queue: waiting for %.2f seconds", wait_time)
+                await asyncio.sleep(wait_time)
+        else:
+            # Fallback to in-memory approach
+            global _last_google_call
+            try:
+                last = _last_google_call
+            except NameError:
+                last = 0
+            now = time.time()
+            if now - last < min_interval:
+                wait_time = min_interval - (now - last)
+                logger.debug("In-memory queue: waiting for %.2f seconds", wait_time)
+                await asyncio.sleep(wait_time)
+            _last_google_call = time.time()
 
     async def _search_with_retries(self, query: str, max_results: int) -> List[str]:
         max_attempts = 3
@@ -106,6 +149,8 @@ class GoogleService:
     async def google_search(self, query: str, max_results: int) -> List[str]:
         logger.debug("GoogleService: google_search called", extra={"query": query, "max_results": max_results})
         await self.rate_limiter_google.check()
+        # Acquire a slot so that searches are evenly spaced
+        await self._acquire_google_search_slot()
         cache_key = f"google_search:{query}:{max_results}"
         if self.rate_limiter_google.redis_client:
             try:
