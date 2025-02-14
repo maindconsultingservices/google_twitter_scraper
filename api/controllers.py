@@ -1,3 +1,9 @@
+import os
+import ssl
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import Request, HTTPException
 from typing import List
 from .services import google_service, twitter_service, web_service
@@ -7,19 +13,19 @@ from .types import SearchMode
 #
 # GOOGLE controller
 #
-async def google_search_controller(query: str, max_results: int):
+async def google_search_controller(query: str, max_results: int, timeframe: str = None):
     """
     Controller to handle the Google search request.
     Ensures validation, logs, and handles exceptions.
     """
     logger.info("Controller: google_search_controller called",
-                extra={"query": query, "max_results": max_results})
+                extra={"query": query, "max_results": max_results, "timeframe": timeframe})
     if not query:
         raise HTTPException(status_code=400, detail="Missing query parameter.")
     if max_results < 1 or max_results > 1000:
         raise HTTPException(status_code=400, detail="max_results must be between 1 and 1000.")
     try:
-        results = await google_service.google_search(query, max_results)
+        results = await google_service.google_search(query, max_results, timeframe)
         return {"results": results}
     except Exception as e:
         logger.error("Error in google_search_controller",
