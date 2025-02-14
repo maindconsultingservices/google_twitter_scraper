@@ -47,7 +47,7 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
     - `month` – results from the last month.
     - `year` – results from the last year.
     
-    Internally, this parameter maps to Google's `tbs` parameter (e.g., `qdr:d` for `24h`).
+    Internally, this parameter appends an `after:YYYY-MM-DD` operator to the query.
 - **Response:** JSON object containing a list of search results.
 - **Redis Integration:** Search results are cached in Redis for 60 seconds to speed up frequent queries and reduce load.
 
