@@ -22,7 +22,7 @@ from .utils import logger
 
 
 #
-# RateLimiter (merged from rate_limiter.py)
+# RateLimiter
 #
 class RateLimiter:
     """
@@ -74,7 +74,7 @@ class RateLimiter:
 
 
 #
-# GOOGLE service (merged from google_service.py)
+# GOOGLE service
 #
 class GoogleService:
     """
@@ -127,12 +127,12 @@ class GoogleService:
                 await asyncio.sleep(wait_time)
             _last_google_call = time.time()
 
-    async def _search_with_retries(self, query: str, max_results: int, tbs: str = None) -> List[str]:
+    async def _search_with_retries(self, query: str, max_results: int) -> List[str]:
         max_attempts = 3
         delay = 1
         for attempt in range(max_attempts):
             try:
-                return await run_in_threadpool(lambda: list(search(query, num_results=max_results, tbs=tbs)))
+                return await run_in_threadpool(lambda: list(search(query, num_results=max_results)))
             except HTTPError as http_err:
                 if http_err.response is not None and http_err.response.status_code == 429:
                     logger.warning("HTTP 429 received from Google search. Attempt %d/%d", attempt + 1, max_attempts)
@@ -151,7 +151,25 @@ class GoogleService:
         await self.rate_limiter_google.check()
         # Acquire a slot so that searches are evenly spaced
         await self._acquire_google_search_slot()
-        cache_key = f"google_search:{query}:{max_results}:{timeframe}"
+        # If a timeframe is provided, compute the cutoff date and append an "after:" operator to the query.
+        if timeframe:
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            if timeframe.lower() == "24h":
+                date = now - timedelta(days=1)
+            elif timeframe.lower() == "week":
+                date = now - timedelta(days=7)
+            elif timeframe.lower() == "month":
+                date = now - timedelta(days=30)
+            elif timeframe.lower() == "year":
+                date = now - timedelta(days=365)
+            else:
+                logger.warning("Invalid timeframe provided, ignoring timeframe filter", extra={"timeframe": timeframe})
+                date = None
+            if date:
+                date_str = date.strftime("%Y-%m-%d")
+                query = f"{query} after:{date_str}"
+        cache_key = f"google_search:{query}:{max_results}"
         if self.rate_limiter_google.redis_client:
             try:
                 cached = await self.rate_limiter_google.redis_client.get(cache_key)
@@ -161,15 +179,9 @@ class GoogleService:
             if cached:
                 logger.debug("Returning cached Google search results", extra={"cache_key": cache_key})
                 return json.loads(cached)
-        tbs = None
-        if timeframe:
-            mapping = {"24h": "qdr:d", "week": "qdr:w", "month": "qdr:m", "year": "qdr:y"}
-            tbs = mapping.get(timeframe.lower())
-            if tbs is None:
-                logger.warning("Invalid timeframe provided, ignoring timeframe filter", extra={"timeframe": timeframe})
         try:
-            # Use the retry-enabled search method instead of a single call
-            results = await self._search_with_retries(query, max_results, tbs=tbs)
+            # Use the retry-enabled search method without passing an unsupported keyword.
+            results = await self._search_with_retries(query, max_results)
             if self.rate_limiter_google.redis_client:
                 try:
                     await self.rate_limiter_google.redis_client.set(cache_key, json.dumps(results), ex=60)
@@ -185,7 +197,7 @@ google_service = GoogleService()
 
 
 #
-# TWITTER CLIENT MANAGER (merged from twitter_client.py)
+# TWITTER CLIENT MANAGER
 #
 class TwitterClientManager:
     def __init__(self):
@@ -372,7 +384,7 @@ twitter_client_manager = TwitterClientManager()
 
 
 #
-# TWITTER service (merged from twitter_service.py)
+# TWITTER service
 #
 class TwitterService:
     def __init__(self):
@@ -909,7 +921,7 @@ twitter_service = TwitterService()
 
 
 #
-# WEB service (merged from web_service.py)
+# WEB service
 #
 class WebService:
     """
