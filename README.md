@@ -41,6 +41,13 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
   - `query` (string, required): The search query.
   - `max_results` (integer, optional, default: 10): Maximum number of results (must be between 1 and 1000).
   - `sites` (array of strings, optional): One or more site restrictions. When provided, the query is automatically modified to include the "site:" operator for each specified domain (grouped with an OR operator).
+  - `timeframe` (string, optional): A relative time filter for search results. Allowed values are:
+    - `24h` – results from the last 24 hours.
+    - `week` – results from the last week.
+    - `month` – results from the last month.
+    - `year` – results from the last year.
+    
+    Internally, this parameter maps to Google's `tbs` parameter (e.g., `qdr:d` for `24h`).
 - **Response:** JSON object containing a list of search results.
 - **Redis Integration:** Search results are cached in Redis for 60 seconds to speed up frequent queries and reduce load.
 
@@ -111,7 +118,7 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
 ## Efficiency Improvements
 
 ### Google Search (`/google/search`)
-The endpoint leverages the synchronous `googlesearch` library and runs the search within a thread pool (using `run_in_threadpool`). This design is now enhanced with Redis caching, which stores frequent query results for 60 seconds.
+The endpoint leverages the synchronous `googlesearch` library and runs the search within a thread pool (using `run_in_threadpool`). This design is now enhanced with Redis caching, which stores frequent query results for 60 seconds. Additionally, a new query parameter (`timeframe`) enables time-based filtering of search results.
 
 ### Web Scraping (`/web/scrape`)
 The scraping logic now executes individual URL scrapes concurrently using `asyncio.gather` and limits concurrent requests via a semaphore. In addition, scraped results are cached in Redis for 60 seconds to reduce redundant requests and speed up responses.
@@ -123,9 +130,9 @@ The scraping logic now executes individual URL scrapes concurrently using `async
 
 > **Note:** These limits are enforced within the application. External services (Google or target websites) may impose stricter rate limits or block repeated requests if the thresholds are exceeded.
 
-## Restricting Google Search by Site
+## Restricting Google Search by Site and Timeframe
 
-The `/google/search` endpoint accepts an optional `sites` query parameter. When supplied, the search query is automatically augmented with the appropriate "site:" operators (grouped with the OR operator) to restrict results to the specified domains.
+The `/google/search` endpoint accepts an optional `sites` query parameter. When supplied, the search query is automatically augmented with the appropriate "site:" operators (grouped with the OR operator) to restrict results to the specified domains. Additionally, the new `timeframe` parameter allows users to filter results by relative time periods (e.g., last 24 hours, last week, last month, last year).
 
 ## Running the Application
 
@@ -133,15 +140,18 @@ The `/google/search` endpoint accepts an optional `sites` query parameter. When 
    ```bash
    pip install -r requirements.txt
    ```
-2. **Configure environment variables:**  
+
+2. **Configure environment variables:**
    Create a `.env` file (or set environment variables) based on the configuration section above. For Redis integration, set the `REDIS_URL` variable (e.g., `redis://localhost:6379/0`).
+
 3. **Run the FastAPI application:**
    ```bash
    uvicorn api.index:app --reload
    ```
-4. **Access the API:**  
+
+4. **Access the API:**
    The endpoints will be available as documented above.
 
 ## Conclusion
 
-This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions), and scraping web pages efficiently. With the new Redis integration, the application now supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
+This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), and scraping web pages efficiently. With the new Redis integration, the application now supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
