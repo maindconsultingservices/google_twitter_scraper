@@ -33,22 +33,23 @@ async def google_search_route(
     query: str,
     max_results: int = 10,
     sites: List[str] = Query(None),
+    timeframe: str = None,
     _=Depends(require_api_key)
 ):
     """
     GET /google/search => run google_search_controller
     Optionally restricts the search to one or several sites by using the "sites" query parameter.
     When multiple sites are provided, they are grouped using parentheses and joined with the OR operator.
+    A new query parameter "timeframe" (allowed values: "24h", "week", "month", "year") enables time-based filtering.
     """
-    logger.debug("Route GET /google/search called", extra={"query": query, "max_results": max_results, "sites": sites})
+    logger.debug("Route GET /google/search called", extra={"query": query, "max_results": max_results, "sites": sites, "timeframe": timeframe})
     if sites:
         if len(sites) > 1:
             sites_query = "(" + " OR ".join(f"site:{s}" for s in sites) + ")"
         else:
             sites_query = f"site:{sites[0]}"
         query = f"{query} {sites_query}"
-    return await google_search_controller(query, max_results)
-
+    return await google_search_controller(query, max_results, timeframe)
 
 # ------------------ TWITTER ROUTES ------------------
 twitter_router = APIRouter()
@@ -102,7 +103,6 @@ async def retweet_route(body: dict, _=Depends(require_api_key)):
 async def like_tweet_route(body: dict, _=Depends(require_api_key)):
     logger.debug("Route POST /twitter/like called.")
     return await like_tweet(body)
-
 
 # ------------------ WEB ROUTES ------------------
 web_router = APIRouter()
