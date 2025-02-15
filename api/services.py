@@ -1005,7 +1005,11 @@ class WebService:
             "model": config.venice_model,
             "messages": [
                 {"role": "system", "content": config.system_prompt},
-                {"role": "user", "content": f"Please summarize the following text: {text}. Also, determine whether the text is related to the query: {query}. Return a JSON object with two keys: 'summary' for the concise summary, and 'isQueryRelated' as a boolean value."}
+                {"role": "user", "content": (
+                    f"Please summarize the following text: {text}. Also, determine whether the text is related to the query: {query}. "
+                    "Set 'isQueryRelated' to true if the content is related to the query, and set 'isQueryRelated' to false only if the content of the site and the input query have nothing to do with each other. "
+                    "Return a JSON object with two keys: 'summary' for the concise summary, and 'isQueryRelated' as a boolean value."
+                )}
             ],
             "venice_parameters": {
                 "include_venice_system_prompt": False
