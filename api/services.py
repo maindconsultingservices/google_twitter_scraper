@@ -2,7 +2,7 @@ import time
 import json
 import traceback
 import asyncio
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 from fastapi.concurrency import run_in_threadpool
 from googlesearch import search
@@ -522,7 +522,7 @@ class TwitterService:
         return search_results
 
     # ================== WRITE methods =====================
-    async def post_tweet(self, text: str, in_reply_to_id: str = None) -> str | None:
+    async def post_tweet(self, text: str, in_reply_to_id: str = None) -> Optional[str]:
         logger.debug("Service: post_tweet called", extra={"text": text, "inReplyToId": in_reply_to_id})
         await self.rate_limiter.check()
         await self._ensure_login()
@@ -540,7 +540,7 @@ class TwitterService:
                          extra={"error": str(e)})
             return None
 
-    async def post_quote_tweet(self, text: str, quote_id: str) -> str | None:
+    async def post_quote_tweet(self, text: str, quote_id: str) -> Optional[str]:
         logger.debug("Service: post_quote_tweet called", extra={"text": text, "quoteId": quote_id})
         await self.rate_limiter.check()
         await self._ensure_login()
@@ -616,7 +616,7 @@ class TwitterService:
                     logger.debug("map_tweet_item returned None for item:\n%r", item)
         return tweets
 
-    def _map_tweet_item(self, data: dict) -> Tweet | None:
+    def _map_tweet_item(self, data: dict) -> Optional[Tweet]:
         try:
             # If "tweet_results" -> "result" is in data, unwrap once more
             if "tweet_results" in data and isinstance(data["tweet_results"], dict):
