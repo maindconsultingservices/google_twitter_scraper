@@ -110,9 +110,10 @@ web_router = APIRouter()
 class UrlsPayload(BaseModel):
     """
     Pydantic model for the incoming request body to scrape multiple URLs.
-    Expects JSON in the format: {"urls": ["https://site1.com", "https://site2.com", ...]}.
+    Expects JSON in the format: {"urls": ["https://site1.com", "https://site2.com", ...], "query": "your query text"}.
     """
     urls: List[str]
+    query: str
 
 @web_router.post("/scrape")
 async def scrape_urls_route(
@@ -120,10 +121,10 @@ async def scrape_urls_route(
     body: UrlsPayload,
     _=Depends(require_api_key)
 ):
-    logger.debug("Route POST /web/scrape called", extra={"urls": body.urls})
+    logger.debug("Route POST /web/scrape called", extra={"urls": body.urls, "query": body.query})
     logger.debug(f"Request headers: {dict(request.headers)}")
     if request.client:
         logger.debug(f"Request client host: {request.client.host}")
     raw_body = await request.body()
     logger.debug(f"Raw request body (decoded): {raw_body.decode('utf-8', errors='replace')}")
-    return await scrape_urls_controller(body.urls)
+    return await scrape_urls_controller(body.urls, body.query)
