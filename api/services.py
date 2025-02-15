@@ -1031,6 +1031,10 @@ Return a JSON object with two keys: 'summary' for the concise summary, and 'isQu
             if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
                 raw_content = data["choices"][0].get("message", {}).get("content", "")
                 raw_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
+                # Remove markdown code block delimiters if present
+                if raw_content.startswith("```"):
+                    raw_content = re.sub(r'^```(?:json)?\s*', '', raw_content)
+                    raw_content = re.sub(r'\s*```$', '', raw_content)
                 try:
                     result_obj = json.loads(raw_content)
                     summary = result_obj.get("summary", "")
