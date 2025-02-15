@@ -110,10 +110,41 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
 ### Web Endpoints
 
 #### `POST /web/scrape`
-- **Description:** Scrapes a list of URLs to extract the page title, meta description, a text preview, full text, and a summary (via the Venice.ai API).
-- **Request Body:** JSON object with `urls` (array of strings, required): List of URLs to scrape.
-- **Response:** JSON object containing scraped data for each URL.
-- **Redis Integration:** Scraped results are cached in Redis for 60 seconds. This caching, together with concurrent URL processing via `asyncio.gather` and a semaphore, ensures low-latency responses even under high load.
+**Description:** Scrapes a list of URLs to extract the page title, meta description, a text preview, full text, a summary (via the Venice.ai API), and a boolean flag IsQueryRelated.
+
+**Request Body:**
+A JSON object with two required properties:
+```json
+{
+  "urls": [
+    "https://xataka.com", 
+    "https://g.co/gfd"
+  ],
+  "query": "latest technology trends"
+}
+```
+
+**Response:**
+A JSON object containing scraped data for each URL:
+```json
+{
+  "scraped": [
+    {
+      "url": "https://xataka.com",
+      "status": 200,
+      "error": null,
+      "title": "Xataka - Tecnología y gadgets, móviles, informática, electrónica",
+      "metaDescription": "Publicación de noticias sobre gadgets y tecnología. Últimas tecnologías en electrónica de consumo y novedades tecnológicas en móviles, tablets, informática, etc",
+      "textPreview": "Xataka - Tecnología y gadgets, móviles, informática, electrónica ...",
+      "fullText": "Xataka - Tecnología y gadgets, móviles, informática, electrónica ... [full text omitted for brevity]",
+      "Summary": "The article covers the latest technology trends in mobile devices and electronics, offering in-depth analysis of current innovations.",
+      "IsQueryRelated": true
+    }
+  ]
+}
+```
+
+**Redis Integration:** Scraped results are cached in Redis for 60 seconds.
 
 ## Efficiency Improvements
 
@@ -129,28 +160,6 @@ The scraping logic now executes individual URL scrapes concurrently using `async
 - **Web Scraping:** The rate limiter permits up to **5 scrape requests per minute**.
 
 > **Note:** These limits are enforced within the application. External services (Google or target websites) may impose stricter rate limits or block repeated requests if the thresholds are exceeded.
-
-## Restricting Google Search by Site and Timeframe
-
-The `/google/search` endpoint accepts an optional `sites` query parameter. When supplied, the search query is automatically augmented with the appropriate "site:" operators (grouped with the OR operator) to restrict results to the specified domains. Additionally, the new `timeframe` parameter allows users to filter results by relative time periods (e.g., last 24 hours, last week, last month, last year).
-
-## Running the Application
-
-1. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Configure environment variables:**
-   Create a `.env` file (or set environment variables) based on the configuration section above. For Redis integration, set the `REDIS_URL` variable (e.g., `redis://localhost:6379/0`).
-
-3. **Run the FastAPI application:**
-   ```bash
-   uvicorn api.index:app --reload
-   ```
-
-4. **Access the API:**
-   The endpoints will be available as documented above.
 
 ## Conclusion
 
