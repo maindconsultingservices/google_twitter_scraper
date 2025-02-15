@@ -188,14 +188,14 @@ async def like_tweet(body: dict):
 #
 # WEB controller
 #
-async def scrape_urls_controller(urls: List[str]):
-    logger.info("Controller: scrape_urls_controller called", extra={"num_urls": len(urls)})
+async def scrape_urls_controller(urls: List[str], query: str):
+    logger.info("Controller: scrape_urls_controller called", extra={"num_urls": len(urls), "query": query})
     if not urls:
         raise HTTPException(status_code=400, detail="No URLs provided.")
     if len(urls) > 100:
         raise HTTPException(status_code=400, detail="Too many URLs. Maximum is 100.")
     try:
-        scraped_data = await web_service.scrape_urls(urls)
+        scraped_data = await web_service.scrape_urls(urls, query)
         return {"scraped": scraped_data}
     except Exception as e:
         logger.error("Error in scrape_urls_controller",
