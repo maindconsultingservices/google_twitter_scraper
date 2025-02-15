@@ -1040,3 +1040,7 @@ class WebService:
             return "", False
 
 web_service = WebService()
+
+# Global service instances
+google_service = GoogleService()
+twitter_service = TwitterService()
