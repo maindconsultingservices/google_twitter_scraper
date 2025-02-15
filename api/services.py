@@ -2,7 +2,7 @@ import time
 import json
 import traceback
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 from fastapi.concurrency import run_in_threadpool
 from googlesearch import search
@@ -917,9 +917,6 @@ class TwitterService:
 
         return found
 
-twitter_service = TwitterService()
-
-
 #
 # WEB service
 #
@@ -935,7 +932,7 @@ class WebService:
         # This session will handle CF challenge flows automatically
         self.scraper = cloudscraper.create_scraper()
 
-    async def _scrape_single_url(self, url: str) -> Dict[str, Any]:
+    async def _scrape_single_url(self, url: str, query: str) -> Dict[str, Any]:
         single_result = {
             "url": url,
             "status": None,
@@ -944,7 +941,8 @@ class WebService:
             "metaDescription": None,
             "textPreview": None,
             "fullText": None,
-            "Summary": None
+            "Summary": None,
+            "IsQueryRelated": None
         }
         if self.rate_limiter.redis_client:
             try:
@@ -969,8 +967,9 @@ class WebService:
                 if full_text:
                     single_result["textPreview"] = full_text[:200]
                     single_result["fullText"] = full_text
-                    summary = await self.summarize_text(full_text)
+                    summary, is_query_related = await self.summarize_text(full_text, query)
                     single_result["Summary"] = summary
+                    single_result["IsQueryRelated"] = is_query_related
             else:
                 single_result["error"] = f"Non-200 status code: {response.status_code}"
         except Exception as exc:
@@ -985,28 +984,28 @@ class WebService:
                 logger.error("Redis error in caching set", extra={"error": str(e)})
         return single_result
 
-    async def scrape_urls(self, urls: List[str]) -> List[Dict[str, Any]]:
-        logger.debug("WebService: scrape_urls called", extra={"urls": urls})
+    async def scrape_urls(self, urls: List[str], query: str) -> List[Dict[str, Any]]:
+        logger.debug("WebService: scrape_urls called", extra={"urls": urls, "query": query})
         await self.rate_limiter.check()
         sem = asyncio.Semaphore(10)
         async def sem_scrape(url):
             async with sem:
-                return await self._scrape_single_url(url)
+                return await self._scrape_single_url(url, query)
         results = await asyncio.gather(*(sem_scrape(url) for url in urls))
         return results
 
-    async def summarize_text(self, text: str) -> str:
+    async def summarize_text(self, text: str, query: str) -> Tuple[str, bool]:
         """
-        Calls the Venice.ai API to get a concise summary of the provided text.
-        If the returned summary contains any <think>...</think> tokens, they are removed.
+        Calls the Venice.ai API to get a concise summary of the provided text and determines
+        whether the text is related to the provided query. Returns a tuple containing the summary and a boolean.
         """
         if not text or len(text) < 20:
-            return ""
+            return "", False
         payload = {
             "model": config.venice_model,
             "messages": [
                 {"role": "system", "content": config.system_prompt},
-                {"role": "user", "content": text}
+                {"role": "user", "content": f"Please summarize the following text: {text}. Also, determine whether the text is related to the query: {query}. Return a JSON object with two keys: 'summary' for the concise summary, and 'isQueryRelated' as a boolean value."}
             ],
             "venice_parameters": {
                 "include_venice_system_prompt": False
@@ -1023,12 +1022,21 @@ class WebService:
             response.raise_for_status()
             data = response.json()
             summary = ""
+            is_query_related = False
             if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
-                summary = data["choices"][0].get("message", {}).get("content", "")
-                summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL).strip()
-            return summary
+                raw_content = data["choices"][0].get("message", {}).get("content", "")
+                raw_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
+                try:
+                    result_obj = json.loads(raw_content)
+                    summary = result_obj.get("summary", "")
+                    is_query_related = result_obj.get("isQueryRelated", False)
+                except Exception as parse_exc:
+                    logger.error("Failed to parse Venice API response as JSON", extra={"error": str(parse_exc), "raw_content": raw_content})
+                    summary = raw_content
+                    is_query_related = False
+            return summary, is_query_related
         except Exception as e:
             logger.error("Error summarizing text", extra={"error": str(e)})
-            return ""
+            return "", False
 
 web_service = WebService()
