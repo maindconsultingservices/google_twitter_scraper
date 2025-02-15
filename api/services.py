@@ -933,16 +933,17 @@ class WebService:
         self.scraper = cloudscraper.create_scraper()
 
     async def _scrape_single_url(self, url: str, query: str) -> Dict[str, Any]:
+        # Initialize with default values. Note: error is None if no error occurs.
         single_result = {
             "url": url,
-            "status": None,
+            "status": 0,
             "error": None,
-            "title": None,
-            "metaDescription": None,
-            "textPreview": None,
-            "fullText": None,
-            "Summary": None,
-            "IsQueryRelated": None
+            "metaDescription": "",
+            "textPreview": "",
+            "title": "",
+            "fullText": "",
+            "Summary": "",
+            "IsQueryRelated": False
         }
         if self.rate_limiter.redis_client:
             try:
@@ -959,10 +960,10 @@ class WebService:
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, "html.parser")
                 title_tag = soup.find("title")
-                single_result["title"] = title_tag.get_text(strip=True) if title_tag else None
-                desc_tag = soup.find("meta", attrs={"name": "description"})
-                if desc_tag and desc_tag.get("content"):
-                    single_result["metaDescription"] = desc_tag["content"].strip()
+                single_result["title"] = title_tag.get_text(strip=True) if title_tag else ""
+                meta_desc_tag = soup.find("meta", attrs={"name": "description"})
+                if meta_desc_tag and meta_desc_tag.get("content"):
+                    single_result["metaDescription"] = meta_desc_tag["content"].strip()
                 full_text = soup.get_text(separator=" ", strip=True)
                 if full_text:
                     single_result["textPreview"] = full_text[:200]
@@ -972,10 +973,10 @@ class WebService:
                     single_result["IsQueryRelated"] = is_query_related
             else:
                 single_result["error"] = f"Non-200 status code: {response.status_code}"
+            # If no error occurred, "error" remains None.
         except Exception as exc:
             tb = traceback.format_exc()
-            logger.error("Error scraping URL",
-                         extra={"url": url, "error": str(exc), "traceback": tb})
+            logger.error("Error scraping URL", extra={"url": url, "error": str(exc), "traceback": tb})
             single_result["error"] = str(exc)
         if self.rate_limiter.redis_client:
             try:
