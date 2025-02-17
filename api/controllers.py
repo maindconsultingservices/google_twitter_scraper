@@ -25,8 +25,8 @@ async def google_search_controller(query: str, max_results: int, timeframe: str 
     if max_results < 1 or max_results > 1000:
         raise HTTPException(status_code=400, detail="max_results must be between 1 and 1000.")
     try:
-        results = await google_service.google_search(query, max_results, timeframe)
-        return {"results": results}
+        search_results, effective_tf = await google_service.google_search(query, max_results, timeframe)
+        return {"results": search_results, "timeframe": effective_tf}
     except Exception as e:
         logger.error("Error in google_search_controller",
                      exc_info=True,
