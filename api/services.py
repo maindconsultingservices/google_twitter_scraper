@@ -5,6 +5,7 @@ import traceback
 import asyncio
 import random
 from typing import List, Dict, Any, Tuple, Optional
+from urllib.parse import urlparse
 
 from fastapi.concurrency import run_in_threadpool
 from googlesearch import search
@@ -24,6 +25,21 @@ from .utils import logger
 
 # Optionally, you can also define a global default:
 MAX_TEXT_LENGTH_TO_SUMMARIZE = int(os.getenv("MAX_TEXT_LENGTH_TO_SUMMARIZE", "5000"))
+
+def is_blacklisted(url: str, blacklisted_domains: List[str]) -> bool:
+    """
+    Checks if the URL's domain is in the list of blacklisted domains.
+    It returns True if the domain matches exactly or is a subdomain of any blacklisted domain.
+    """
+    try:
+        domain = urlparse(url).netloc.lower()
+        for b in blacklisted_domains:
+            b = b.lower()
+            if domain == b or domain.endswith("." + b):
+                return True
+        return False
+    except Exception:
+        return False
 
 #
 # RateLimiter
@@ -192,6 +208,10 @@ class GoogleService:
         await self.rate_limiter_google.check()
         await self._acquire_google_search_slot()
 
+        # Get the list of blacklisted domains from environment variable
+        blacklist_env = os.getenv("SEARCH_BLACKLISTED_DOMAINS", "")
+        blacklisted_domains = [d.strip().lower() for d in blacklist_env.split(",") if d.strip()]
+
         # Local helper to build query with timeframe
         def build_query(q: str, tf: Optional[str]) -> str:
             from datetime import datetime, timedelta
@@ -221,13 +241,26 @@ class GoogleService:
                     results = await self._search_with_retries(mod_query, max_results)
                 except Exception as e:
                     results = []
-                # Filter out invalid URLs and PDF URLs
-                valid_results = [r for r in results if r and r.startswith("http") and not r.lower().endswith(".pdf")]
+                # Filter out invalid URLs, PDF URLs, and blacklisted domains
+                valid_results = [
+                    r for r in results 
+                    if r and r.startswith("http") 
+                    and not r.lower().endswith(".pdf") 
+                    and not is_blacklisted(r, blacklisted_domains)
+                ]
                 if len(valid_results) >= 3:
                     effective_tf = tf if tf is not None else "none"
-                    filtered_results = [r for r in results if not r.lower().endswith(".pdf")]
+                    filtered_results = [
+                        r for r in results 
+                        if not r.lower().endswith(".pdf") 
+                        and not is_blacklisted(r, blacklisted_domains)
+                    ]
                     return filtered_results, effective_tf
-            filtered_results = [r for r in results if not r.lower().endswith(".pdf")]
+            filtered_results = [
+                r for r in results 
+                if not r.lower().endswith(".pdf") 
+                and not is_blacklisted(r, blacklisted_domains)
+            ]
             return filtered_results, effective_tf
         else:
             if timeframe:
@@ -242,7 +275,11 @@ class GoogleService:
                 tb = traceback.format_exc()
                 logger.error("Error in google_search method", extra={"error": str(e), "traceback": tb})
                 raise
-            filtered_results = [r for r in results if not r.lower().endswith(".pdf")]
+            filtered_results = [
+                r for r in results 
+                if not r.lower().endswith(".pdf") 
+                and not is_blacklisted(r, blacklisted_domains)
+            ]
             return filtered_results, effective_tf
 
 google_service = GoogleService()
@@ -1161,7 +1198,7 @@ class WebService:
             "Authorization": f"Bearer {config.venice_api_key}",
             "Content-Type": "application/json"
         }
-        max_attempts = 3
+        max_attempts = 4
         delay = 1
         for attempt in range(max_attempts):
             try:
