@@ -1,3 +1,4 @@
+import os
 import time
 import json
 import traceback
@@ -21,6 +22,8 @@ from .config import config
 from .types import Tweet, QueryTweetsResponse, SearchMode
 from .utils import logger
 
+# Optionally, you can also define a global default:
+MAX_TEXT_LENGTH_TO_SUMMARIZE = int(os.getenv("MAX_TEXT_LENGTH_TO_SUMMARIZE", "5000"))
 
 #
 # RateLimiter
@@ -1068,7 +1071,6 @@ class WebService:
                     if full_text:
                         single_result["textPreview"] = full_text[:200]
                         single_result["fullText"] = full_text
-                        # Updated call: now receiving three values including relatedURLs.
                         summary, is_query_related, related_urls = await self.summarize_text(full_text, query)
                         single_result["Summary"] = summary
                         single_result["IsQueryRelated"] = is_query_related
@@ -1111,6 +1113,11 @@ class WebService:
         """
         if not text or len(text) < 20:
             return "", False, []
+        
+        # Truncate the text if it exceeds the maximum allowed length.
+        max_text_length = int(os.getenv("MAX_TEXT_LENGTH_TO_SUMMARIZE", "5000"))
+        if len(text) > max_text_length:
+            text = text[:max_text_length]
 
         # Respect Venice rate limits
         await self.venice_rate_limiter.check()
