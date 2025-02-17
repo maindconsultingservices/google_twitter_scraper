@@ -1063,6 +1063,7 @@ class WebService:
                     title_tag = soup.find("title")
                     if not title_tag:
                         logger.warning("No title found in HTML, unexpected HTML structure", extra={"url": url, "html_snippet": response.text[:300]})
+                        logger.debug("Full HTML content for debugging", extra={"url": url, "html": response.text})
                     single_result["title"] = title_tag.get_text(strip=True) if title_tag else ""
                     meta_desc_tag = soup.find("meta", attrs={"name": "description"})
                     if meta_desc_tag and meta_desc_tag.get("content"):
@@ -1077,7 +1078,13 @@ class WebService:
                         single_result["relatedURLs"] = related_urls
             else:
                 single_result["error"] = f"Non-200 status code: {response.status_code}"
-                logger.warning("Non-200 response while scraping URL", extra={"url": url, "status_code": response.status_code})
+                logger.warning("Non-200 response while scraping URL", extra={
+                    "url": url,
+                    "status_code": response.status_code,
+                    "headers": dict(response.headers),
+                    "body_snippet": response.text[:500] if response.text else ""
+                })
+            # End of try block for response
         except Exception as exc:
             tb = traceback.format_exc()
             logger.error("Error scraping URL", extra={"url": url, "error": str(exc), "traceback": tb})
