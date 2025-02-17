@@ -46,7 +46,10 @@ class RateLimiter:
                 )
                 logger.debug("Distributed rate limiter enabled with Redis.", extra={"redis_url": config.redis_url})
             except Exception as e:
-                logger.error("Failed to initialize Redis client for rate limiting. Falling back to in-memory.", extra={"error": str(e)})
+                if config.enable_debug:
+                    logger.exception("Failed to initialize Redis client for rate limiting. Falling back to in-memory.")
+                else:
+                    logger.error("Failed to initialize Redis client for rate limiting. Falling back to in-memory.", extra={"error": str(e)})
 
     async def check(self):
         if self.redis_client:
@@ -62,7 +65,10 @@ class RateLimiter:
                     raise Exception("Rate limit exceeded. Please try again later.")
                 return
             except Exception as e:
-                logger.error("Error in distributed rate limiter, falling back to in-memory.", extra={"error": str(e)})
+                if config.enable_debug:
+                    logger.exception("Error in distributed rate limiter, falling back to in-memory.")
+                else:
+                    logger.error("Error in distributed rate limiter, falling back to in-memory.", extra={"error": str(e)})
                 self._in_memory_check(now)
         else:
             self._in_memory_check(int(time.time() * 1000))
@@ -179,7 +185,10 @@ class GoogleService:
             try:
                 cached = await self.rate_limiter_google.redis_client.get(cache_key)
             except Exception as e:
-                logger.error("Redis error in google search caching get", extra={"error": str(e)})
+                if config.enable_debug:
+                    logger.exception("Redis error in google search caching get")
+                else:
+                    logger.error("Redis error in google search caching get", extra={"error": str(e)})
                 cached = None
             if cached:
                 logger.debug("Returning cached Google search results", extra={"cache_key": cache_key})
@@ -191,7 +200,10 @@ class GoogleService:
                 try:
                     await self.rate_limiter_google.redis_client.set(cache_key, json.dumps(results), ex=60)
                 except Exception as e:
-                    logger.error("Redis error in google search caching set", extra={"error": str(e)})
+                    if config.enable_debug:
+                        logger.exception("Redis error in google search caching set")
+                    else:
+                        logger.error("Redis error in google search caching set", extra={"error": str(e)})
             return results
         except Exception as e:
             tb = traceback.format_exc()
@@ -954,7 +966,10 @@ class WebService:
             try:
                 cached = await self.rate_limiter.redis_client.get(f"scrape:{url}")
             except Exception as e:
-                logger.error("Redis error in caching get", extra={"error": str(e)})
+                if config.enable_debug:
+                    logger.exception("Redis error in caching get")
+                else:
+                    logger.error("Redis error in caching get", extra={"error": str(e)})
                 cached = None
             if cached:
                 logger.debug("Returning cached scrape result", extra={"url": url})
@@ -987,7 +1002,10 @@ class WebService:
             try:
                 await self.rate_limiter.redis_client.set(f"scrape:{url}", json.dumps(single_result), ex=60)
             except Exception as e:
-                logger.error("Redis error in caching set", extra={"error": str(e)})
+                if config.enable_debug:
+                    logger.exception("Redis error in caching set")
+                else:
+                    logger.error("Redis error in caching set", extra={"error": str(e)})
         return single_result
 
     async def scrape_urls(self, urls: List[str], query: str) -> List[Dict[str, Any]]:
