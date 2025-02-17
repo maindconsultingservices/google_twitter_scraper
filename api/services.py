@@ -978,6 +978,20 @@ class WebService:
         self.venice_rate_limiter = RateLimiter(20, 60_000)
 
     async def _scrape_single_url(self, url: str, query: str) -> Dict[str, Any]:
+        # Check for empty or invalid URL
+        if not url or not isinstance(url, str) or url.strip() == "":
+            logger.error("Empty or invalid URL provided for scraping")
+            return {
+                "url": url,
+                "status": 0,
+                "error": "Empty or invalid URL provided",
+                "metaDescription": "",
+                "textPreview": "",
+                "title": "",
+                "fullText": "",
+                "Summary": "",
+                "IsQueryRelated": False
+            }
         # Initialize with default values. Note: error is None if no error occurs.
         single_result = {
             "url": url,
@@ -1010,19 +1024,30 @@ class WebService:
             logger.debug("Finished scraping URL", extra={"url": url, "duration": duration, "status_code": response.status_code})
             single_result["status"] = response.status_code
             if response.status_code == 200:
-                soup = BeautifulSoup(response.text, "html.parser")
-                title_tag = soup.find("title")
-                single_result["title"] = title_tag.get_text(strip=True) if title_tag else ""
-                meta_desc_tag = soup.find("meta", attrs={"name": "description"})
-                if meta_desc_tag and meta_desc_tag.get("content"):
-                    single_result["metaDescription"] = meta_desc_tag["content"].strip()
-                full_text = soup.get_text(separator=" ", strip=True)
-                if full_text:
-                    single_result["textPreview"] = full_text[:200]
-                    single_result["fullText"] = full_text
-                    summary, is_query_related = await self.summarize_text(full_text, query)
-                    single_result["Summary"] = summary
-                    single_result["IsQueryRelated"] = is_query_related
+                if not response.text or response.text.strip() == "":
+                    logger.error("Empty response text received, possibly due to anti-bot block or network issue", extra={"url": url})
+                    single_result["error"] = "Empty response text received"
+                else:
+                    # Check for common anti-bot markers
+                    lower_text = response.text.lower()
+                    if "access denied" in lower_text or "captcha" in lower_text or "bot check" in lower_text:
+                        logger.error("Response indicates possible anti-bot protection", extra={"url": url, "response_snippet": response.text[:500]})
+                        single_result["error"] = "Anti-bot protection triggered"
+                    soup = BeautifulSoup(response.text, "html.parser")
+                    title_tag = soup.find("title")
+                    if not title_tag:
+                        logger.warning("No title found in HTML, unexpected HTML structure", extra={"url": url, "html_snippet": response.text[:300]})
+                    single_result["title"] = title_tag.get_text(strip=True) if title_tag else ""
+                    meta_desc_tag = soup.find("meta", attrs={"name": "description"})
+                    if meta_desc_tag and meta_desc_tag.get("content"):
+                        single_result["metaDescription"] = meta_desc_tag["content"].strip()
+                    full_text = soup.get_text(separator=" ", strip=True)
+                    if full_text:
+                        single_result["textPreview"] = full_text[:200]
+                        single_result["fullText"] = full_text
+                        summary, is_query_related = await self.summarize_text(full_text, query)
+                        single_result["Summary"] = summary
+                        single_result["IsQueryRelated"] = is_query_related
             else:
                 single_result["error"] = f"Non-200 status code: {response.status_code}"
                 logger.warning("Non-200 response while scraping URL", extra={"url": url, "status_code": response.status_code})
