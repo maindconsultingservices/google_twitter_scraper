@@ -51,15 +51,41 @@ class RateLimiter:
                 else:
                     logger.error("Failed to initialize Redis client for rate limiting. Falling back to in-memory.", extra={"error": str(e)})
 
+    async def safe_execute(self, method_name: str, *args, **kwargs):
+        """
+        Executes a redis method safely by catching 'closed' connection errors and reinitializing the client.
+        """
+        if not self.redis_client:
+            raise Exception("Redis client not initialized")
+        try:
+            return await getattr(self.redis_client, method_name)(*args, **kwargs)
+        except RuntimeError as e:
+            if "closed" in str(e):
+                try:
+                    import redis.asyncio as redis_asyncio
+                    self.redis_client = redis_asyncio.from_url(
+                        config.redis_url,
+                        decode_responses=True,
+                        retry_on_timeout=True,
+                        socket_connect_timeout=5
+                    )
+                    logger.debug("Reinitialized Redis client in safe_execute due to closed connection", extra={"method": method_name})
+                    return await getattr(self.redis_client, method_name)(*args, **kwargs)
+                except Exception as e2:
+                    logger.exception("Failed to reinitialize Redis client", extra={"error": str(e2)})
+                    raise e2
+            else:
+                raise e
+
     async def check(self):
         if self.redis_client:
             now = int(time.time() * 1000)
             window = now // self.window_ms
             key = f"rate_limiter:{id(self)}:{window}"
             try:
-                count = await self.redis_client.incr(key)
+                count = await self.safe_execute('incr', key)
                 if count == 1:
-                    await self.redis_client.expire(key, self.window_ms // 1000)
+                    await self.safe_execute('expire', key, self.window_ms // 1000)
                 if count > self.max_requests:
                     logger.warning("Rate limit exceeded (distributed).", extra={"key": key, "count": count})
                     raise Exception("Rate limit exceeded. Please try again later.")
@@ -183,7 +209,7 @@ class GoogleService:
         cache_key = f"google_search:{query}:{max_results}"
         if self.rate_limiter_google.redis_client:
             try:
-                cached = await self.rate_limiter_google.redis_client.get(cache_key)
+                cached = await self.rate_limiter_google.safe_execute('get', cache_key)
             except Exception as e:
                 if config.enable_debug:
                     logger.exception("Redis error in google search caching get")
@@ -198,7 +224,7 @@ class GoogleService:
             results = await self._search_with_retries(query, max_results)
             if self.rate_limiter_google.redis_client:
                 try:
-                    await self.rate_limiter_google.redis_client.set(cache_key, json.dumps(results), ex=60)
+                    await self.rate_limiter_google.safe_execute('set', cache_key, json.dumps(results), ex=60)
                 except Exception as e:
                     if config.enable_debug:
                         logger.exception("Redis error in google search caching set")
@@ -948,6 +974,8 @@ class WebService:
         self.rate_limiter = RateLimiter(5, 60_000)
         # This session will handle CF challenge flows automatically
         self.scraper = cloudscraper.create_scraper()
+        # Add a dedicated rate limiter for Venice API calls (20 per minute per user)
+        self.venice_rate_limiter = RateLimiter(20, 60_000)
 
     async def _scrape_single_url(self, url: str, query: str) -> Dict[str, Any]:
         # Initialize with default values. Note: error is None if no error occurs.
@@ -964,7 +992,7 @@ class WebService:
         }
         if self.rate_limiter.redis_client:
             try:
-                cached = await self.rate_limiter.redis_client.get(f"scrape:{url}")
+                cached = await self.rate_limiter.safe_execute('get', f"scrape:{url}")
             except Exception as e:
                 if config.enable_debug:
                     logger.exception("Redis error in caching get")
@@ -1000,7 +1028,7 @@ class WebService:
             single_result["error"] = str(exc)
         if self.rate_limiter.redis_client:
             try:
-                await self.rate_limiter.redis_client.set(f"scrape:{url}", json.dumps(single_result), ex=60)
+                await self.rate_limiter.safe_execute('set', f"scrape:{url}", json.dumps(single_result), ex=60)
             except Exception as e:
                 if config.enable_debug:
                     logger.exception("Redis error in caching set")
@@ -1022,9 +1050,14 @@ class WebService:
         """
         Calls the Venice.ai API to get a concise summary of the provided text and determines
         whether the text is related to the provided query. Returns a tuple containing the summary and a boolean.
+        Implements retries and respects Venice rate limits.
         """
         if not text or len(text) < 20:
             return "", False
+
+        # Respect Venice rate limits
+        await self.venice_rate_limiter.check()
+
         payload = {
             "model": config.venice_model,
             "messages": [
@@ -1050,32 +1083,60 @@ class WebService:
             "Authorization": f"Bearer {config.venice_api_key}",
             "Content-Type": "application/json"
         }
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(config.venice_url, json=payload, headers=headers, timeout=30.0)
-            response.raise_for_status()
-            data = response.json()
-            summary = ""
-            is_query_related = False
-            if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
-                raw_content = data["choices"][0].get("message", {}).get("content", "")
-                raw_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
-                # Remove markdown code block delimiters if present
-                if raw_content.startswith("```"):
-                    raw_content = re.sub(r'^```(?:json)?\s*', '', raw_content)
-                    raw_content = re.sub(r'\s*```$', '', raw_content)
-                try:
-                    result_obj = json.loads(raw_content)
-                    summary = result_obj.get("summary", "")
-                    is_query_related = result_obj.get("isQueryRelated", False)
-                except Exception as parse_exc:
-                    logger.error("Failed to parse Venice API response as JSON", extra={"error": str(parse_exc), "raw_content": raw_content})
-                    summary = raw_content
-                    is_query_related = False
-            return summary, is_query_related
-        except Exception as e:
-            logger.error("Error summarizing text", extra={"error": str(e)})
-            return "", False
+        max_attempts = 3
+        delay = 1
+        for attempt in range(max_attempts):
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(config.venice_url, json=payload, headers=headers, timeout=30.0)
+                # If Venice returns 503 or 400, log details and retry if appropriate.
+                if response.status_code == 503:
+                    reset_time = response.headers.get("x-ratelimit-reset-requests")
+                    try:
+                        delay = float(reset_time) if reset_time is not None else delay
+                    except Exception:
+                        delay = delay
+                    logger.warning("Venice API 503 Service Unavailable, retrying", extra={"attempt": attempt+1, "delay": delay})
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+                elif response.status_code == 400:
+                    logger.error("Venice API 400 Bad Request", extra={"response": response.text})
+                    # Do not retry on 400 since it likely indicates a payload issue.
+                    break
+                response.raise_for_status()
+                data = response.json()
+                summary = ""
+                is_query_related = False
+                if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
+                    raw_content = data["choices"][0].get("message", {}).get("content", "")
+                    raw_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
+                    # Remove markdown code block delimiters if present
+                    if raw_content.startswith("```"):
+                        raw_content = re.sub(r'^```(?:json)?\s*', '', raw_content)
+                        raw_content = re.sub(r'\s*```$', '', raw_content)
+                    try:
+                        result_obj = json.loads(raw_content)
+                        summary = result_obj.get("summary", "")
+                        is_query_related = result_obj.get("isQueryRelated", False)
+                    except Exception as parse_exc:
+                        logger.error("Failed to parse Venice API response as JSON", extra={"error": str(parse_exc), "raw_content": raw_content})
+                        summary = raw_content
+                        is_query_related = False
+                return summary, is_query_related
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 503:
+                    logger.warning("Venice API HTTP 503 Service Unavailable, retrying", extra={"attempt": attempt+1})
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+                else:
+                    logger.error("Venice API HTTP error", extra={"error": str(e)})
+                    break
+            except Exception as e:
+                logger.error("Error summarizing text", extra={"error": str(e)})
+                break
+        return "", False
 
 web_service = WebService()
 
