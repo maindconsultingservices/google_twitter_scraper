@@ -1009,7 +1009,8 @@ class WebService:
                 "title": "",
                 "fullText": "",
                 "Summary": "",
-                "IsQueryRelated": False
+                "IsQueryRelated": False,
+                "relatedURLs": []
             }
         # Initialize with default values. Note: error is None if no error occurs.
         single_result = {
@@ -1021,7 +1022,8 @@ class WebService:
             "title": "",
             "fullText": "",
             "Summary": "",
-            "IsQueryRelated": False
+            "IsQueryRelated": False,
+            "relatedURLs": []
         }
         if self.rate_limiter.redis_client:
             try:
@@ -1066,9 +1068,11 @@ class WebService:
                     if full_text:
                         single_result["textPreview"] = full_text[:200]
                         single_result["fullText"] = full_text
-                        summary, is_query_related = await self.summarize_text(full_text, query)
+                        # Updated call: now receiving three values including relatedURLs.
+                        summary, is_query_related, related_urls = await self.summarize_text(full_text, query)
                         single_result["Summary"] = summary
                         single_result["IsQueryRelated"] = is_query_related
+                        single_result["relatedURLs"] = related_urls
             else:
                 single_result["error"] = f"Non-200 status code: {response.status_code}"
                 logger.warning("Non-200 response while scraping URL", extra={"url": url, "status_code": response.status_code})
@@ -1098,14 +1102,15 @@ class WebService:
         results = await asyncio.gather(*(sem_scrape(url) for url in urls))
         return results
 
-    async def summarize_text(self, text: str, query: str) -> Tuple[str, bool]:
+    async def summarize_text(self, text: str, query: str) -> Tuple[str, bool, List[str]]:
         """
-        Calls the Venice.ai API to get a concise summary of the provided text and determines
-        whether the text is related to the provided query. Returns a tuple containing the summary and a boolean.
+        Calls the Venice.ai API to get a comprehensive and extensive summary of the provided text, determine
+        whether the text is related to the provided query, and extract any URLs within the text that seem related.
+        Returns a tuple containing the summary (str), a boolean indicating if the text is related, and a list of related URLs.
         Implements retries and respects Venice rate limits.
         """
         if not text or len(text) < 20:
-            return "", False
+            return "", False, []
 
         # Respect Venice rate limits
         await self.venice_rate_limiter.check()
@@ -1117,13 +1122,17 @@ class WebService:
                 {"role": "user", "content": (
                     f"""
                     Please provide a comprehensive and extensive summary of the following text: {text},
-                    ensuring that all relevant points and the conclusions extracted from the text are included,
+                    ensuring that all relevant points and conclusions extracted from the text are included,
                     especially those related to the query: {query}.
                     Also, determine whether the text is related to the query: {query}.
+                    If there are any URLs present within the text that appear to be relevant to the query, extract them
+                    and include them in an array.
                     Set 'isQueryRelated' to true if the content is related to the query, and set 'isQueryRelated' to false 
                     only if the content of the site and the input query have nothing to do with each other.
-                    Return a JSON object with two keys:
-                    'summary' for the comprehensive summary, and 'isQueryRelated' as a boolean value.
+                    Return a JSON object with three keys:
+                    'summary' for the comprehensive summary,
+                    'isQueryRelated' as a boolean value,
+                    and 'relatedURLs' as an array of URLs (an empty array if none are found).
                     """
                 )}
             ],
@@ -1161,6 +1170,7 @@ class WebService:
                 data = response.json()
                 summary = ""
                 is_query_related = False
+                related_urls = []
                 if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
                     raw_content = data["choices"][0].get("message", {}).get("content", "")
                     raw_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
@@ -1172,11 +1182,15 @@ class WebService:
                         result_obj = json.loads(raw_content)
                         summary = result_obj.get("summary", "")
                         is_query_related = result_obj.get("isQueryRelated", False)
+                        related_urls = result_obj.get("relatedURLs", [])
+                        if not isinstance(related_urls, list):
+                            related_urls = []
                     except Exception as parse_exc:
                         logger.error("Failed to parse Venice API response as JSON", extra={"error": str(parse_exc), "raw_content": raw_content})
                         summary = raw_content
                         is_query_related = False
-                return summary, is_query_related
+                        related_urls = []
+                return summary, is_query_related, related_urls
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 503:
                     logger.warning("Venice API HTTP 503 Service Unavailable, retrying", extra={"attempt": attempt+1})
@@ -1189,7 +1203,7 @@ class WebService:
             except Exception as e:
                 logger.error("Error summarizing text", extra={"error": str(e)})
                 break
-        return "", False
+        return "", False, []
 
 web_service = WebService()
 
