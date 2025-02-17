@@ -1003,7 +1003,11 @@ class WebService:
                 logger.debug("Returning cached scrape result", extra={"url": url})
                 return json.loads(cached)
         try:
+            start_time = time.time()
+            logger.debug("Starting scraping URL", extra={"url": url})
             response = await run_in_threadpool(lambda: self.scraper.get(url, timeout=10))
+            duration = time.time() - start_time
+            logger.debug("Finished scraping URL", extra={"url": url, "duration": duration, "status_code": response.status_code})
             single_result["status"] = response.status_code
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, "html.parser")
@@ -1021,7 +1025,7 @@ class WebService:
                     single_result["IsQueryRelated"] = is_query_related
             else:
                 single_result["error"] = f"Non-200 status code: {response.status_code}"
-            # If no error occurred, "error" remains None.
+                logger.warning("Non-200 response while scraping URL", extra={"url": url, "status_code": response.status_code})
         except Exception as exc:
             tb = traceback.format_exc()
             logger.error("Error scraping URL", extra={"url": url, "error": str(exc), "traceback": tb})
