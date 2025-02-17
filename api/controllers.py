@@ -20,13 +20,20 @@ async def google_search_controller(query: str, max_results: int, timeframe: str 
     """
     logger.info("Controller: google_search_controller called",
                 extra={"query": query, "max_results": max_results, "timeframe": timeframe})
+    # Log input details if debug is enabled.
+    if hasattr(query, "lower") and logger.isEnabledFor("DEBUG") and getattr(__import__('os').environ, "get", lambda k, d: None)("ENABLE_DEBUG") == "true":
+        logger.debug("Input to google_search_controller", extra={"query": query, "max_results": max_results, "timeframe": timeframe})
     if not query:
         raise HTTPException(status_code=400, detail="Missing query parameter.")
     if max_results < 1 or max_results > 1000:
         raise HTTPException(status_code=400, detail="max_results must be between 1 and 1000.")
     try:
         search_results, effective_tf = await google_service.google_search(query, max_results, timeframe)
-        return {"results": search_results, "timeframe": effective_tf}
+        output = {"results": search_results, "timeframe": effective_tf}
+        # Log output details if debug is enabled.
+        if config.enable_debug:
+            logger.debug("Output from google_search_controller", extra=output)
+        return output
     except Exception as e:
         logger.error("Error in google_search_controller",
                      exc_info=True,
@@ -194,8 +201,18 @@ async def scrape_urls_controller(urls: List[str], query: str):
         raise HTTPException(status_code=400, detail="No URLs provided.")
     if len(urls) > 100:
         raise HTTPException(status_code=400, detail="Too many URLs. Maximum is 100.")
+    
+    # Log input request if debug is enabled.
+    if config.enable_debug:
+        logger.debug("Input to scrape_urls_controller", extra={"urls": urls, "query": query})
+    
     try:
         scraped_data = await web_service.scrape_urls(urls, query)
+        
+        # Log output response if debug is enabled.
+        if config.enable_debug:
+            logger.debug("Output from scrape_urls_controller", extra={"scraped_data": scraped_data})
+            
         return {"scraped": scraped_data}
     except Exception as e:
         logger.error("Error in scrape_urls_controller",
