@@ -184,7 +184,7 @@ class GoogleService:
                 else:
                     raise
 
-    async def google_search(self, query: str, max_results: int, timeframe: str = None) -> List[str]:
+    async def google_search(self, query: str, max_results: int, timeframe: str = None) -> Tuple[List[str], str]:
         logger.debug("GoogleService: google_search called", extra={"query": query, "max_results": max_results, "timeframe": timeframe})
         await self.rate_limiter_google.check()
         await self._acquire_google_search_slot()
@@ -211,6 +211,7 @@ class GoogleService:
         if timeframe and timeframe.lower() == "week":
             fallback_timeframes = ["week", "month", "year", None]
             results = []
+            effective_tf = "none"
             for tf in fallback_timeframes:
                 mod_query = build_query(query, tf) if tf is not None else query
                 try:
@@ -220,18 +221,23 @@ class GoogleService:
                 # Filter out invalid URLs
                 valid_results = [r for r in results if r and r.startswith("http")]
                 if len(valid_results) >= 3:
-                    return results
-            return results
+                    effective_tf = tf if tf is not None else "none"
+                    return results, effective_tf
+            return results, effective_tf
         else:
             if timeframe:
-                query = build_query(query, timeframe)
+                mod_query = build_query(query, timeframe)
+                effective_tf = timeframe.lower()
+            else:
+                mod_query = query
+                effective_tf = "none"
             try:
-                results = await self._search_with_retries(query, max_results)
+                results = await self._search_with_retries(mod_query, max_results)
             except Exception as e:
                 tb = traceback.format_exc()
                 logger.error("Error in google_search method", extra={"error": str(e), "traceback": tb})
                 raise
-            return results
+            return results, effective_tf
 
 google_service = GoogleService()
 
