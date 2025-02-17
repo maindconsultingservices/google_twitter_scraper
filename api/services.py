@@ -221,12 +221,14 @@ class GoogleService:
                     results = await self._search_with_retries(mod_query, max_results)
                 except Exception as e:
                     results = []
-                # Filter out invalid URLs
-                valid_results = [r for r in results if r and r.startswith("http")]
+                # Filter out invalid URLs and PDF URLs
+                valid_results = [r for r in results if r and r.startswith("http") and not r.lower().endswith(".pdf")]
                 if len(valid_results) >= 3:
                     effective_tf = tf if tf is not None else "none"
-                    return results, effective_tf
-            return results, effective_tf
+                    filtered_results = [r for r in results if not r.lower().endswith(".pdf")]
+                    return filtered_results, effective_tf
+            filtered_results = [r for r in results if not r.lower().endswith(".pdf")]
+            return filtered_results, effective_tf
         else:
             if timeframe:
                 mod_query = build_query(query, timeframe)
@@ -240,7 +242,8 @@ class GoogleService:
                 tb = traceback.format_exc()
                 logger.error("Error in google_search method", extra={"error": str(e), "traceback": tb})
                 raise
-            return results, effective_tf
+            filtered_results = [r for r in results if not r.lower().endswith(".pdf")]
+            return filtered_results, effective_tf
 
 google_service = GoogleService()
 
@@ -1084,7 +1087,6 @@ class WebService:
                     "headers": dict(response.headers),
                     "body_snippet": response.text[:500] if response.text else ""
                 })
-            # End of try block for response
         except Exception as exc:
             tb = traceback.format_exc()
             logger.error("Error scraping URL", extra={"url": url, "error": str(exc), "traceback": tb})
