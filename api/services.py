@@ -1007,9 +1007,15 @@ class WebService:
             "messages": [
                 {"role": "system", "content": config.system_prompt},
                 {"role": "user", "content": (
-                    f"""Please summarize the following text: {text}. Also, determine whether the text is related to the query: {query}. 
-Set 'isQueryRelated' to true if the content is related to the query, and set 'isQueryRelated' to false only if the content of the site and the input query have nothing to do with each other. 
-Return a JSON object with two keys: 'summary' for the concise summary, and 'isQueryRelated' as a boolean value."""
+                    f"""
+                    Please provide a comprehensive summary of the following text: {text},
+                    ensuring that all relevant points from the text are included, especially those related to the query: {query}.
+                    Also, determine whether the text is related to the query: {query}.
+                    Set 'isQueryRelated' to true if the content is related to the query, and set 'isQueryRelated' to false 
+                    only if the content of the site and the input query have nothing to do with each other.
+                    Return a JSON object with two keys:
+                    'summary' for the comprehensive summary, and 'isQueryRelated' as a boolean value.
+                    """
                 )}
             ],
             "venice_parameters": {
