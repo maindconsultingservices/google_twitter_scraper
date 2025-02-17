@@ -2,6 +2,7 @@ import time
 import json
 import traceback
 import asyncio
+import random
 from typing import List, Dict, Any, Tuple, Optional
 
 from fastapi.concurrency import run_in_threadpool
@@ -972,8 +973,16 @@ class WebService:
     """
     def __init__(self):
         self.rate_limiter = RateLimiter(5, 60_000)
-        # This session will handle CF challenge flows automatically
+        # This session will handle CF challenge flows automatically and maintain cookies between requests.
         self.scraper = cloudscraper.create_scraper()
+        self.scraper.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer": "https://www.google.com/",
+            "Connection": "keep-alive"
+        })
         # Add a dedicated rate limiter for Venice API calls (20 per minute per user)
         self.venice_rate_limiter = RateLimiter(20, 60_000)
 
@@ -1017,8 +1026,10 @@ class WebService:
                 logger.debug("Returning cached scrape result", extra={"url": url})
                 return json.loads(cached)
         try:
-            start_time = time.time()
             logger.debug("Starting scraping URL", extra={"url": url})
+            # Introduce a random delay to mimic human behavior (jitter)
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            start_time = time.time()
             response = await run_in_threadpool(lambda: self.scraper.get(url, timeout=10))
             duration = time.time() - start_time
             logger.debug("Finished scraping URL", extra={"url": url, "duration": duration, "status_code": response.status_code})
