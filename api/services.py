@@ -38,7 +38,12 @@ class RateLimiter:
         if config.redis_url:
             try:
                 import redis.asyncio as redis_asyncio
-                self.redis_client = redis_asyncio.from_url(config.redis_url)
+                self.redis_client = redis_asyncio.from_url(
+                    config.redis_url,
+                    decode_responses=True,
+                    retry_on_timeout=True,
+                    socket_connect_timeout=5
+                )
                 logger.debug("Distributed rate limiter enabled with Redis.", extra={"redis_url": config.redis_url})
             except Exception as e:
                 logger.error("Failed to initialize Redis client for rate limiting. Falling back to in-memory.", extra={"error": str(e)})
