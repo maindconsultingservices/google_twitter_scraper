@@ -187,55 +187,51 @@ class GoogleService:
     async def google_search(self, query: str, max_results: int, timeframe: str = None) -> List[str]:
         logger.debug("GoogleService: google_search called", extra={"query": query, "max_results": max_results, "timeframe": timeframe})
         await self.rate_limiter_google.check()
-        # Acquire a slot so that searches are evenly spaced
         await self._acquire_google_search_slot()
-        # If a timeframe is provided, compute the cutoff date and append an "after:" operator to the query.
-        if timeframe:
+
+        # Local helper to build query with timeframe
+        def build_query(q: str, tf: Optional[str]) -> str:
             from datetime import datetime, timedelta
-            now = datetime.now()
-            if timeframe.lower() == "24h":
-                date = now - timedelta(days=1)
-            elif timeframe.lower() == "week":
-                date = now - timedelta(days=7)
-            elif timeframe.lower() == "month":
-                date = now - timedelta(days=30)
-            elif timeframe.lower() == "year":
-                date = now - timedelta(days=365)
+            if tf is None:
+                return q
+            if tf.lower() == "24h":
+                date = datetime.now() - timedelta(days=1)
+            elif tf.lower() == "week":
+                date = datetime.now() - timedelta(days=7)
+            elif tf.lower() == "month":
+                date = datetime.now() - timedelta(days=30)
+            elif tf.lower() == "year":
+                date = datetime.now() - timedelta(days=365)
             else:
-                logger.warning("Invalid timeframe provided, ignoring timeframe filter", extra={"timeframe": timeframe})
-                date = None
-            if date:
-                date_str = date.strftime("%Y-%m-%d")
-                query = f"{query} after:{date_str}"
-        cache_key = f"google_search:{query}:{max_results}"
-        if self.rate_limiter_google.redis_client:
-            try:
-                cached = await self.rate_limiter_google.safe_execute('get', cache_key)
-            except Exception as e:
-                if config.enable_debug:
-                    logger.exception("Redis error in google search caching get")
-                else:
-                    logger.error("Redis error in google search caching get", extra={"error": str(e)})
-                cached = None
-            if cached:
-                logger.debug("Returning cached Google search results", extra={"cache_key": cache_key})
-                return json.loads(cached)
-        try:
-            # Use the retry-enabled search method without passing an unsupported keyword.
-            results = await self._search_with_retries(query, max_results)
-            if self.rate_limiter_google.redis_client:
+                logger.warning("Invalid timeframe provided, ignoring timeframe filter", extra={"timeframe": tf})
+                return q
+            return f"{q} after:{date.strftime('%Y-%m-%d')}"
+        
+        # If the timeframe is "week", apply fallback logic.
+        if timeframe and timeframe.lower() == "week":
+            fallback_timeframes = ["week", "month", "year", None]
+            results = []
+            for tf in fallback_timeframes:
+                mod_query = build_query(query, tf) if tf is not None else query
                 try:
-                    await self.rate_limiter_google.safe_execute('set', cache_key, json.dumps(results), ex=60)
+                    results = await self._search_with_retries(mod_query, max_results)
                 except Exception as e:
-                    if config.enable_debug:
-                        logger.exception("Redis error in google search caching set")
-                    else:
-                        logger.error("Redis error in google search caching set", extra={"error": str(e)})
+                    results = []
+                # Filter out invalid URLs
+                valid_results = [r for r in results if r and r.startswith("http")]
+                if len(valid_results) >= 3:
+                    return results
             return results
-        except Exception as e:
-            tb = traceback.format_exc()
-            logger.error("Error in google_search method", extra={"error": str(e), "traceback": tb})
-            raise
+        else:
+            if timeframe:
+                query = build_query(query, timeframe)
+            try:
+                results = await self._search_with_retries(query, max_results)
+            except Exception as e:
+                tb = traceback.format_exc()
+                logger.error("Error in google_search method", extra={"error": str(e), "traceback": tb})
+                raise
+            return results
 
 google_service = GoogleService()
 
@@ -986,6 +982,14 @@ class WebService:
         # Add a dedicated rate limiter for Venice API calls (20 per minute per user)
         self.venice_rate_limiter = RateLimiter(20, 60_000)
 
+    def _is_valid_url(self, url: str) -> bool:
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(url)
+            return bool(parsed.scheme and parsed.netloc)
+        except Exception:
+            return False
+
     async def _scrape_single_url(self, url: str, query: str) -> Dict[str, Any]:
         # Check for empty or invalid URL
         if not url or not isinstance(url, str) or url.strip() == "":
@@ -1079,6 +1083,8 @@ class WebService:
     async def scrape_urls(self, urls: List[str], query: str) -> List[Dict[str, Any]]:
         logger.debug("WebService: scrape_urls called", extra={"urls": urls, "query": query})
         await self.rate_limiter.check()
+        # Filter out invalid URLs to avoid calling the scrape logic on nonsense values.
+        urls = [url for url in urls if self._is_valid_url(url)]
         sem = asyncio.Semaphore(10)
         async def sem_scrape(url):
             async with sem:
