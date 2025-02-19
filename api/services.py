@@ -14,7 +14,7 @@ from googlesearch import search
 import cloudscraper
 from bs4 import BeautifulSoup
 import httpx
-import re  # Added to enable removal of <think> tokens
+import re
 from requests.exceptions import HTTPError
 
 from twitter.account import Account
@@ -32,7 +32,6 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
 ]
 
-# Optionally, you can also define a global default:
 MAX_TEXT_LENGTH_TO_SUMMARIZE = int(os.getenv("MAX_TEXT_LENGTH_TO_SUMMARIZE", "5000"))
 
 def is_blacklisted(url: str, blacklisted_domains: List[str]) -> bool:
