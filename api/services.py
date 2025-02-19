@@ -1,3 +1,5 @@
+# api/services.py
+
 import os
 import time
 import json
@@ -22,6 +24,13 @@ from twitter.search import Search
 from .config import config
 from .types import Tweet, QueryTweetsResponse, SearchMode
 from .utils import logger
+
+# New: List of common user-agent strings for Google search requests.
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+]
 
 # Optionally, you can also define a global default:
 MAX_TEXT_LENGTH_TO_SUMMARIZE = int(os.getenv("MAX_TEXT_LENGTH_TO_SUMMARIZE", "5000"))
@@ -139,7 +148,8 @@ class GoogleService:
     to uniformly space out requests over time.
     """
     def __init__(self):
-        self.rate_limiter_google = RateLimiter(10, 60_000)
+        # Lower rate limit to reduce chance of being blacklisted
+        self.rate_limiter_google = RateLimiter(5, 60_000)
 
     async def _acquire_google_search_slot(self):
         """
@@ -188,7 +198,17 @@ class GoogleService:
         delay = 1
         for attempt in range(max_attempts):
             try:
-                return await run_in_threadpool(lambda: list(search(query, num_results=max_results)))
+                # Use a randomized user agent and a longer pause to help avoid 429 errors
+                return await run_in_threadpool(
+                    lambda: list(
+                        search(
+                            query,
+                            num_results=max_results,
+                            pause=2.5,
+                            user_agent=random.choice(USER_AGENTS)
+                        )
+                    )
+                )
             except HTTPError as http_err:
                 if http_err.response is not None and http_err.response.status_code == 429:
                     logger.warning("HTTP 429 received from Google search. Attempt %d/%d", attempt + 1, max_attempts)
