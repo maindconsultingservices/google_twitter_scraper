@@ -1,5 +1,3 @@
-# api/services.py
-
 import os
 import time
 import json
@@ -1117,7 +1115,19 @@ class WebService:
                     single_result["title"] = title_tag.get_text(strip=True) if title_tag else ""
                     if meta_desc_tag and meta_desc_tag.get("content"):
                         single_result["metaDescription"] = meta_desc_tag["content"].strip()
+                    # --- NEW READABILITY CHECK ---
                     if full_text:
+                        def is_readable(text: str) -> bool:
+                            if not text:
+                                return False
+                            # If more than 20% of the characters are the replacement character "�", consider it unreadable
+                            if text.count("�") / len(text) > 0.2:
+                                return False
+                            return True
+                        if not is_readable(full_text):
+                            logger.warning("Content from URL is unreadable, ignoring", extra={"url": url})
+                            return None
+                        # --------------------------------
                         single_result["textPreview"] = full_text[:200]
                         single_result["fullText"] = full_text
                         summary, is_query_related, related_urls = await self.summarize_text(full_text, query)
@@ -1156,6 +1166,8 @@ class WebService:
             async with sem:
                 return await self._scrape_single_url(url, query)
         results = await asyncio.gather(*(sem_scrape(url) for url in urls))
+        # Filter out entries that are None (i.e. unreadable content)
+        results = [r for r in results if r is not None]
         return results
 
     async def summarize_text(self, text: str, query: str) -> Tuple[str, bool, List[str]]:
