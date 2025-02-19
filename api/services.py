@@ -1,3 +1,5 @@
+# api/services.py
+
 import os
 import time
 import json
@@ -128,7 +130,6 @@ class RateLimiter:
             raise Exception("Rate limit exceeded. Please try again later.")
         self.queue.append(now)
         logger.debug("RateLimiter check passed (in-memory).", extra={"newQueueLength": len(self.queue)})
-
 
 #
 # GOOGLE service
@@ -283,7 +284,6 @@ class GoogleService:
             return filtered_results, effective_tf
 
 google_service = GoogleService()
-
 
 #
 # TWITTER CLIENT MANAGER
@@ -470,7 +470,6 @@ class TwitterClientManager:
         return self._logged_in
 
 twitter_client_manager = TwitterClientManager()
-
 
 #
 # TWITTER service
@@ -1086,6 +1085,8 @@ class WebService:
             await asyncio.sleep(random.uniform(0.5, 1.5))
             start_time = time.time()
             response = await run_in_threadpool(lambda: self.scraper.get(url, timeout=10))
+            # Force correct encoding based on apparent encoding
+            response.encoding = response.apparent_encoding
             duration = time.time() - start_time
             logger.debug("Finished scraping URL", extra={"url": url, "duration": duration, "status_code": response.status_code})
             single_result["status"] = response.status_code
@@ -1094,21 +1095,28 @@ class WebService:
                     logger.error("Empty response text received, possibly due to anti-bot block or network issue", extra={"url": url})
                     single_result["error"] = "Empty response text received"
                 else:
-                    # Check for common anti-bot markers
-                    lower_text = response.text.lower()
-                    if "access denied" in lower_text or "captcha" in lower_text or "bot check" in lower_text:
-                        logger.error("Response indicates possible anti-bot protection", extra={"url": url, "response_snippet": response.text[:500]})
-                        single_result["error"] = "Anti-bot protection triggered"
+                    # Parse HTML content
                     soup = BeautifulSoup(response.text, "html.parser")
                     title_tag = soup.find("title")
+                    meta_desc_tag = soup.find("meta", attrs={"name": "description"})
+                    full_text = soup.get_text(separator=" ", strip=True)
+                    # Check for common anti-bot markers only if title is missing or appears invalid
+                    anti_bot_markers = ["access denied", "captcha", "bot check"]
+                    lower_text = response.text.lower()
+                    if any(marker in lower_text for marker in anti_bot_markers):
+                        if not title_tag or len(title_tag.get_text(strip=True)) < 5:
+                            logger.error("Response indicates possible anti-bot protection", extra={"url": url, "response_snippet": response.text[:500]})
+                            single_result["error"] = "Anti-bot protection triggered"
+                        else:
+                            single_result["error"] = None
+                    else:
+                        single_result["error"] = None
                     if not title_tag:
                         logger.warning("No title found in HTML, unexpected HTML structure", extra={"url": url, "html_snippet": response.text[:300]})
                         logger.debug("Full HTML content for debugging", extra={"url": url, "html": response.text})
                     single_result["title"] = title_tag.get_text(strip=True) if title_tag else ""
-                    meta_desc_tag = soup.find("meta", attrs={"name": "description"})
                     if meta_desc_tag and meta_desc_tag.get("content"):
                         single_result["metaDescription"] = meta_desc_tag["content"].strip()
-                    full_text = soup.get_text(separator=" ", strip=True)
                     if full_text:
                         single_result["textPreview"] = full_text[:200]
                         single_result["fullText"] = full_text
@@ -1187,7 +1195,7 @@ class WebService:
                     'isQueryRelated' as a boolean value,
                     and 'relatedURLs' as an array of URLs (an empty array if none are found).
                     """
-                )}
+                )},
             ],
             "venice_parameters": {
                 "include_venice_system_prompt": False
