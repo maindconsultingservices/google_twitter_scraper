@@ -6,7 +6,7 @@ This project is a FastAPI application that exposes several API endpoints to inte
 
 ## Region
 
-To be deployed on Vercel functions - Frankfurt region
+To be deployed on Vercel functions, on several different regions at the same time for multiplicating scraping capacity and to do load balancing.
 
 ## Configuration
 
