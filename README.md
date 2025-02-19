@@ -4,6 +4,10 @@
 
 This project is a FastAPI application that exposes several API endpoints to interact with Twitter (retrieving tweets, posting tweets, etc.), perform Google searches, and scrape web pages. It includes rate limiting for external service calls and an API key based authentication middleware. Additionally, the application now integrates with Redis to support distributed rate limiting and caching, making it more scalable for higher request volumes.
 
+## Region
+
+To be deployed on Vercel functions - Frankfurt region
+
 ## Configuration
 
 The application is configured using environment variables (via a `.env` file). Key configuration options include:
