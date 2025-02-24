@@ -197,14 +197,14 @@ class GoogleService:
         delay = 1
         for attempt in range(max_attempts):
             try:
-                # Use a randomized user agent and a longer pause to help avoid 429 errors
+                # Use num=10 for results per page and stop=max_results to limit total results
                 return await run_in_threadpool(
                     lambda: list(
                         search(
                             query,
-                            num_results=max_results,
-                            pause=2.5,
-                            user_agent=random.choice(USER_AGENTS)
+                            num=10,
+                            stop=max_results,
+                            pause=2.5
                         )
                     )
                 )
