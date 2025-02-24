@@ -25,6 +25,9 @@ from .config import config
 from .types import Tweet, QueryTweetsResponse, SearchMode
 from .utils import logger
 
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+
 # List of common user-agent strings for Google search requests.
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
@@ -1297,8 +1300,36 @@ class WebService:
                 break
         return "", False, []
 
-web_service = WebService()
+class EmailService:
+    def __init__(self):
+        self.api_key = config.sendgrid_api_key
+        self.from_email = config.sendgrid_from_email
 
-# Global service instances
+    async def send_email(self, to_email: str, subject: str, html_content: str):
+        if not self.api_key:
+            raise ValueError("Sendgrid API key is not configured")
+        if not self.from_email:
+            raise ValueError("Sendgrid from email is not configured")
+        
+        message = Mail(
+            from_email=self.from_email,
+            to_emails=to_email,
+            subject=subject,
+            html_content=html_content
+        )
+        sg = SendGridAPIClient(self.api_key)
+        try:
+            # Run synchronous Sendgrid call in thread pool to avoid blocking
+            response = await run_in_threadpool(sg.send, message)
+            if response.status_code == 202:
+                return {"status": "success", "message": "Email sent successfully"}
+            else:
+                return {"status": "error", "message": f"Failed to send email: {response.status_code}"}
+        except Exception as e:
+            logger.error("Error sending email", exc_info=True, extra={"error": str(e)})
+            raise
+
+web_service = WebService()
 google_service = GoogleService()
 twitter_service = TwitterService()
+email_service = EmailService()
