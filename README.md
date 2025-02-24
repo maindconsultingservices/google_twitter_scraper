@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project is a FastAPI application that exposes several API endpoints to interact with Twitter (retrieving tweets, posting tweets, etc.), perform Google searches, scrape web pages, and send emails via SendGrid. It includes rate limiting for external service calls and an API key based authentication middleware. Additionally, the application now integrates with Redis to support distributed rate limiting and caching, making it more scalable for higher request volumes.
+This project is a FastAPI application that exposes several API endpoints to interact with Twitter (retrieving tweets, posting tweets, etc.), perform Google searches, scrape web pages, and send emails via Sendgrid. It includes rate limiting for external service calls and an API key based authentication middleware. Additionally, the application integrates with Redis to support distributed rate limiting and caching, making it more scalable for higher request volumes.
 
 ## Region
 
@@ -16,9 +16,8 @@ The application is configured using environment variables (via a `.env` file). K
 - **TWITTER_COOKIES_JSON**: Twitter cookies in JSON format for authentication.
 - **ENABLE_DEBUG**: Enable debug logging.
 - **VENICE_API_KEY**, **VENICE_MODEL**, **VENICE_URL**, **VENICE_TEMPERATURE**: Configuration for the Venice.ai API used to summarize text.
-- **SENDGRID_API_KEY**: The API key for SendGrid email service.
-- **SENDGRID_FROM_EMAIL**: The sender email address for SendGrid emails.
-- **SENDGRID_TO_EMAIL**: Optional default recipient email (not used in the current endpoint).
+- **SENDGRID_API_KEY**: API key for Sendgrid.
+- **SENDGRID_FROM_EMAIL**: Default sender email address for emails sent via the `/email/send` endpoint.
 - Additional Twitter credentials (such as `twitter_email`, `twitter_username`, `twitter_password`) may be required depending on the authentication method.
 - **REDIS_URL**: URL of the Redis server to be used for distributed rate limiting and caching. If not set or if Redis is unreachable, the application falls back to an in-memory implementation.
 
@@ -119,55 +118,54 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
 #### `POST /web/scrape`
 - **Description:** Scrapes a list of URLs to extract the page title, meta description, a text preview, full text, a summary (via the Venice.ai API), and a boolean flag IsQueryRelated.
 - **Request Body:** A JSON object with two required properties:
-  ```json
-  {
-    "urls": [
-      "https://xataka.com", 
-      "https://g.co/gfd"
-    ],
-    "query": "latest technology trends"
-  }
-  ```
+```json
+{
+  "urls": [
+    "https://xataka.com", 
+    "https://g.co/gfd"
+  ],
+  "query": "latest technology trends"
+}
+```
 - **Response:** A JSON object containing scraped data for each URL:
-  ```json
-  {
-    "scraped": [
-      {
-        "url": "https://xataka.com",
-        "status": 200,
-        "error": null,
-        "title": "Xataka - Tecnología y gadgets, móviles, informática, electrónica",
-        "metaDescription": "Publicación de noticias sobre gadgets y tecnología. Últimas tecnologías en electrónica de consumo y novedades tecnológicas en móviles, tablets, informática, etc",
-        "textPreview": "Xataka - Tecnología y gadgets, móviles, informática, electrónica ...",
-        "fullText": "Xataka - Tecnología y gadgets, móviles, informática, electrónica ... [full text omitted for brevity]",
-        "Summary": "The article covers the latest technology trends in mobile devices and electronics, offering in-depth analysis of current innovations.",
-        "IsQueryRelated": true
-      }
-    ]
-  }
-  ```
+```json
+{
+  "scraped": [
+    {
+      "url": "https://xataka.com",
+      "status": 200,
+      "error": null,
+      "title": "Xataka - Tecnología y gadgets, móviles, informática, electrónica",
+      "metaDescription": "Publicación de noticias sobre gadgets y tecnología. Últimas tecnologías en electrónica de consumo y novedades tecnológicas en móviles, tablets, informática, etc",
+      "textPreview": "Xataka - Tecnología y gadgets, móviles, informática, electrónica ...",
+      "fullText": "Xataka - Tecnología y gadgets, móviles, informática, electrónica ... [full text omitted for brevity]",
+      "Summary": "The article covers the latest technology trends in mobile devices and electronics, offering in-depth analysis of current innovations.",
+      "IsQueryRelated": true
+    }
+  ]
+}
+```
 - **Redis Integration:** Scraped results are cached in Redis for 60 seconds.
 
 ### Email Endpoints
 
 #### `POST /email/send`
-- **Description:** Sends an email using SendGrid.
+- **Description:** Sends an email using Sendgrid.
 - **Request Body:** JSON object with:
   - `to_email` (string, required): The recipient's email address.
-  - `subject` (string, required): The subject of the email.
+  - `subject` (string, required): The email subject.
   - `html_content` (string, required): The HTML content of the email.
-- **Response:**
-  - Success: `{"status": "success", "message": "Email sent successfully"}`
-  - Failure: JSON with error details and appropriate status code (e.g., 500).
-- **Authentication:** Requires a valid API key in the `x-api-key` header.
+- **Response:** JSON object indicating success or failure.
+  - On success: `{"status": "success", "message": "Email sent successfully"}`
+  - On failure: `{"status": "error", "message": "Failed to send email: <status_code>"}` or HTTP 500 error if an internal error occurs.
 
 ## Efficiency Improvements
 
 ### Google Search (`/google/search`)
-The endpoint leverages the synchronous `googlesearch` library and runs the search within a thread pool (using `run_in_threadpool`). This design is now enhanced with Redis caching, which stores frequent query results for 60 seconds. Additionally, a new query parameter (`timeframe`) enables time-based filtering of search results.
+The endpoint leverages the synchronous googlesearch library and runs the search within a thread pool (using run_in_threadpool). This design is now enhanced with Redis caching, which stores frequent query results for 60 seconds. Additionally, a new query parameter (timeframe) enables time-based filtering of search results.
 
 ### Web Scraping (`/web/scrape`)
-The scraping logic now executes individual URL scrapes concurrently using `asyncio.gather` and limits concurrent requests via a semaphore. In addition, scraped results are cached in Redis for 60 seconds to reduce redundant requests and speed up responses.
+The scraping logic now executes individual URL scrapes concurrently using asyncio.gather and limits concurrent requests via a semaphore. In addition, scraped results are cached in Redis for 60 seconds to reduce redundant requests and speed up responses.
 
 ## Rate Limits and Blacklisting
 - **Google Search:** The in-memory (or distributed, if Redis is configured) rate limiter allows up to 10 searches per minute.
@@ -176,30 +174,6 @@ The scraping logic now executes individual URL scrapes concurrently using `async
 **Note:** These limits are enforced within the application. External services (Google or target websites) may impose stricter rate limits or block repeated requests if the thresholds are exceeded.
 
 ## Conclusion
-This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, and sending emails via SendGrid efficiently. With the new Redis integration, the application now supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
+This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
 
-## Production-Readiness Considerations
-
-- **Security**: The endpoint requires the `x-api-key` header, consistent with existing endpoints. Environment variables keep sensitive data (e.g., `SENDGRID_API_KEY`) out of the codebase.
-- **Error Handling**: Checks for missing configuration, handles SendGrid errors with detailed logging, and returns appropriate HTTP status codes.
-- **Performance**: Uses `run_in_threadpool` to prevent blocking, suitable for I/O-bound email sending.
-- **Validation**: Pydantic ensures required fields are present; additional email format validation could be added if needed.
-- **Logging**: Success and failure events are logged for monitoring and debugging.
-- **Scalability**: No rate limiting is applied to the email endpoint yet; if needed, it can be added similar to other endpoints.
-
-## Next Steps
-
-1. **Install Dependencies**: Run `pip install sendgrid==6.10.0` or update `requirements.txt` and install.
-2. **Update `.env`**:
-   ```
-   SENDGRID_API_KEY=your_sendgrid_api_key
-   SENDGRID_FROM_EMAIL=your_email@example.com
-   SENDGRID_TO_EMAIL=optional_default_recipient@example.com
-   ```
-3. **Test the Endpoint**:
-   ```bash
-   curl -X POST "http://localhost:8000/email/send" \
-        -H "x-api-key: your_api_key" \
-        -H "Content-Type: application/json" \
-        -d '{"to_email": "recipient@example.com", "subject": "Test Email", "html_content": "<p>Hello!</p>"}'
-   ```
+---
