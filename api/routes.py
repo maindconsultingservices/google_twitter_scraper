@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Depends, Query
+from fastapi import APIRouter, Request, Depends, Query, HTTPException
 from typing import List
 from pydantic import BaseModel
 
@@ -17,16 +17,16 @@ from .controllers import (
     like_tweet,
     scrape_urls_controller
 )
+from .services import email_service
+from .types import EmailPayload
 from .utils import logger
 
-#
-# We define separate routers here: google_router, twitter_router, web_router
-# All are combined in index.py
-#
+google_router = APIRouter()
+twitter_router = APIRouter()
+web_router = APIRouter()
+email_router = APIRouter()
 
 # ------------------ GOOGLE ROUTES ------------------
-google_router = APIRouter()
-
 @google_router.get("/search")
 async def google_search_route(
     user_request: Request,
@@ -52,8 +52,6 @@ async def google_search_route(
     return await google_search_controller(query, max_results, timeframe)
 
 # ------------------ TWITTER ROUTES ------------------
-twitter_router = APIRouter()
-
 @twitter_router.get("/user/{user_id}/tweets")
 async def get_user_tweets_route(user_id: str, request: Request, _=Depends(require_api_key)):
     logger.debug("Route GET /twitter/user/{user_id}/tweets called.")
@@ -105,8 +103,6 @@ async def like_tweet_route(body: dict, _=Depends(require_api_key)):
     return await like_tweet(body)
 
 # ------------------ WEB ROUTES ------------------
-web_router = APIRouter()
-
 class UrlsPayload(BaseModel):
     """
     Pydantic model for the incoming request body to scrape multiple URLs.
@@ -130,7 +126,6 @@ async def scrape_urls_route(
     return await scrape_urls_controller(body.urls, body.query)
 
 # ------------------ EMAIL ROUTE ------------------
-
 @email_router.post("/send")
 async def send_email(payload: EmailPayload, _=Depends(require_api_key)):
     """
