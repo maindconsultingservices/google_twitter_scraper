@@ -202,7 +202,7 @@ class GoogleService:
                         search(
                             query,
                             num_results=max_results,
-                            sleep_interval=1
+                            sleep_interval=2.5
                         )
                     )
                 )
@@ -223,11 +223,11 @@ class GoogleService:
         logger.debug("GoogleService: google_search called", extra={"query": query, "max_results": max_results, "timeframe": timeframe})
         await self.rate_limiter_google.check()
         await self._acquire_google_search_slot()
-
+    
         # Get the list of blacklisted domains from environment variable
         blacklist_env = os.getenv("SEARCH_BLACKLISTED_DOMAINS", "")
         blacklisted_domains = [d.strip().lower() for d in blacklist_env.split(",") if d.strip()]
-
+    
         # Local helper to build query with timeframe
         def build_query(q: str, tf: Optional[str]) -> str:
             from datetime import datetime, timedelta
@@ -245,10 +245,10 @@ class GoogleService:
                 logger.warning("Invalid timeframe provided, ignoring timeframe filter", extra={"timeframe": tf})
                 return q
             return f"{q} after:{date.strftime('%Y-%m-%d')}"
-        
-        # If the timeframe is "week", apply fallback logic.
+    
         if timeframe and timeframe.lower() == "week":
-            fallback_timeframes = ["week", "month", "year", None]
+            # Updated fallback sequence: "week" -> "year" -> None
+            fallback_timeframes = ["week", "year", None]
             results = []
             effective_tf = "none"
             for tf in fallback_timeframes:
@@ -257,28 +257,30 @@ class GoogleService:
                     results = await self._search_with_retries(mod_query, max_results)
                 except Exception as e:
                     results = []
-                # Filter out invalid URLs, PDF URLs, and blacklisted domains
+                # Filter out invalid URLs, PDFs, and blacklisted domains
                 valid_results = [
-                    r for r in results 
-                    if r and r.startswith("http") 
-                    and not r.lower().endswith(".pdf") 
+                    r for r in results
+                    if r and r.startswith("http")
+                    and not r.lower().endswith(".pdf")
                     and not is_blacklisted(r, blacklisted_domains)
                 ]
-                if len(valid_results) >= 3:
+                if len(valid_results) >= 3:  # Threshold for sufficient results
                     effective_tf = tf if tf is not None else "none"
                     filtered_results = [
-                        r for r in results 
-                        if not r.lower().endswith(".pdf") 
+                        r for r in results
+                        if not r.lower().endswith(".pdf")
                         and not is_blacklisted(r, blacklisted_domains)
                     ]
                     return filtered_results, effective_tf
+            # Return whatever results we have after exhausting fallbacks
             filtered_results = [
-                r for r in results 
-                if not r.lower().endswith(".pdf") 
+                r for r in results
+                if not r.lower().endswith(".pdf")
                 and not is_blacklisted(r, blacklisted_domains)
             ]
             return filtered_results, effective_tf
         else:
+            # Handle non-"week" timeframes or no timeframe without fallback
             if timeframe:
                 mod_query = build_query(query, timeframe)
                 effective_tf = timeframe.lower()
@@ -292,8 +294,8 @@ class GoogleService:
                 logger.error("Error in google_search method", extra={"error": str(e), "traceback": tb})
                 raise
             filtered_results = [
-                r for r in results 
-                if not r.lower().endswith(".pdf") 
+                r for r in results
+                if not r.lower().endswith(".pdf")
                 and not is_blacklisted(r, blacklisted_domains)
             ]
             return filtered_results, effective_tf
