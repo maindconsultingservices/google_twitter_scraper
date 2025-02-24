@@ -3,13 +3,12 @@ from fastapi.exceptions import RequestValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from .routes import twitter_router, google_router, web_router
+from .routes import twitter_router, google_router, web_router, email_router
 from .utils import logger
 
 logger.info("Starting the application entry point...")
 
 app = FastAPI()
-
 
 class LogBodyMiddleware(BaseHTTPMiddleware):
     """
@@ -27,7 +26,6 @@ class LogBodyMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
         return response
-
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -48,7 +46,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors()}
     )
 
-
 # Attach the middleware
 app.add_middleware(LogBodyMiddleware)
 
@@ -56,3 +53,4 @@ app.add_middleware(LogBodyMiddleware)
 app.include_router(twitter_router, prefix="/twitter", tags=["twitter"])
 app.include_router(google_router, prefix="/google", tags=["google"])
 app.include_router(web_router, prefix="/web", tags=["web"])
+app.include_router(email_router, prefix="/email", tags=["email"])
