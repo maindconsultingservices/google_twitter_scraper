@@ -202,7 +202,7 @@ class GoogleService:
                         search(
                             query,
                             num_results=max_results,
-                            sleep_interval=2.5
+                            sleep_interval=1
                         )
                     )
                 )
