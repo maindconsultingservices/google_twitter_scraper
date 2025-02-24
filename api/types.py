@@ -19,7 +19,6 @@ class Tweet(BaseModel):
     replyCount: int
     retweetCount: int
 
-
 class SearchMode(str, Enum):
     Latest = "Latest"
     Top = "Top"
@@ -27,6 +26,10 @@ class SearchMode(str, Enum):
     Photos = "Photos"
     Videos = "Videos"
 
-
 class QueryTweetsResponse(BaseModel):
     tweets: List[Tweet]
+
+class EmailPayload(BaseModel):
+    to_email: str
+    subject: str
+    html_content: str
