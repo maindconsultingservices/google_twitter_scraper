@@ -128,3 +128,23 @@ async def scrape_urls_route(
     raw_body = await request.body()
     logger.debug(f"Raw request body (decoded): {raw_body.decode('utf-8', errors='replace')}")
     return await scrape_urls_controller(body.urls, body.query)
+
+# ------------------ EMAIL ROUTE ------------------
+
+@email_router.post("/send")
+async def send_email(payload: EmailPayload, _=Depends(require_api_key)):
+    """
+    Send an email using Sendgrid.
+    """
+    try:
+        result = await email_service.send_email(
+            to_email=payload.to_email,
+            subject=payload.subject,
+            html_content=payload.html_content
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error("Error in send_email endpoint", exc_info=True, extra={"error": str(e)})
+        raise HTTPException(status_code=500, detail="Failed to send email")
