@@ -14,5 +14,7 @@ class Config:
     venice_temperature = float(os.getenv("VENICE_TEMPERATURE", "0.2"))
     system_prompt = os.getenv("SYSTEM_PROMPT", "Be precise")
     redis_url = os.getenv("REDIS_URL", "")
+    sendgrid_api_key = os.getenv("SENDGRID_API_KEY", "")
+    sendgrid_from_email = os.getenv("SENDGRID_FROM_EMAIL", "")
 
 config = Config()
