@@ -57,6 +57,35 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
 - **Response:** JSON object containing a list of search results.
 - **Redis Integration:** Search results are cached in Redis for 60 seconds to speed up frequent queries and reduce load.
 
+#### `GET /google/search_and_scrape`
+- **Description:** Performs a Google search and then scrapes the resulting URLs, combining the functionality of `/google/search` and `/web/scrape` into a single request.
+- **Query Parameters:**
+  - `query` (string, required): The search query.
+  - `max_results` (integer, optional, default: 10): Maximum number of search results to process (must be between 1 and 100).
+  - `sites` (array of strings, optional): One or more site restrictions. When provided, the query is automatically modified to include the "site:" operator for each specified domain (grouped with an OR operator).
+  - `timeframe` (string, optional): A relative time filter for search results. Allowed values are:
+    - `24h` – results from the last 24 hours.
+    - `week` – results from the last week.
+    - `month` – results from the last month.
+    - `year` – results from the last year.
+    
+    Internally, this parameter appends an `after:YYYY-MM-DD` operator to the query.
+- **Response:** JSON object with:
+  - `scraped`: Array containing detailed information about each URL, including:
+    - `url`: The URL that was scraped.
+    - `status`: HTTP status code from the request.
+    - `error`: Error message if an error occurred, or null if successful.
+    - `title`: The page title.
+    - `metaDescription`: Meta description from the page.
+    - `textPreview`: Short preview of the page text.
+    - `fullText`: Full text content of the page.
+    - `Summary`: Summary of the page content, generated using the Venice.ai API.
+    - `IsQueryRelated`: Boolean indicating whether the content is related to the search query.
+    - `relatedURLs`: Array of related URLs found in the content.
+  - `timeframe`: The time filter that was effectively applied to the search.
+- **Redis Integration:** Both the search results and the scraped data are cached in Redis for 60 seconds to improve performance and reduce external requests.
+- **Notes:** The `max_results` parameter should not exceed 5 to minimize the likelihood of getting a timeout error when using Vercel's free tier.
+
 ### Twitter Endpoints
 
 #### `GET /twitter/user/{user_id}/tweets`
@@ -164,6 +193,9 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
 ### Google Search (`/google/search`)
 The endpoint leverages the synchronous googlesearch library and runs the search within a thread pool (using run_in_threadpool). This design is now enhanced with Redis caching, which stores frequent query results for 60 seconds. Additionally, a new query parameter (timeframe) enables time-based filtering of search results.
 
+### Google Search and Scrape (`/google/search_and_scrape`)
+This endpoint combines the functionality of the `/google/search` and `/web/scrape` endpoints, first performing a search and then automatically scraping all returned URLs. This reduces client-side complexity and network round-trips. The endpoint limits `max_results` to 100 to prevent timeouts on Vercel's 60-second execution limit (on free tier). It is recommended that max_result doesn't exceed 5 either to minimize the likelihood of hitting execution limit.
+
 ### Web Scraping (`/web/scrape`)
 The scraping logic now executes individual URL scrapes concurrently using asyncio.gather and limits concurrent requests via a semaphore. In addition, scraped results are cached in Redis for 60 seconds to reduce redundant requests and speed up responses.
 
@@ -174,6 +206,6 @@ The scraping logic now executes individual URL scrapes concurrently using asynci
 **Note:** These limits are enforced within the application. External services (Google or target websites) may impose stricter rate limits or block repeated requests if the thresholds are exceeded.
 
 ## Conclusion
-This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
+This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses. The new `/google/search_and_scrape` endpoint simplifies client implementations by combining search and scrape operations into a single request.
 
 ---
