@@ -1,15 +1,24 @@
 import os
 import ssl
 from dotenv import load_dotenv
+import unicodedata
 
 load_dotenv()
 
 from fastapi import Request, HTTPException
 from typing import List
-from .services import google_service, twitter_service, web_service
+from .services import google_service, twitter_service, web_service, email_service
 from .utils import logger
 from .types import SearchMode
 from .config import config
+
+def normalize_query(query: str) -> str:
+    """
+    Normalize accented characters to their ASCII equivalents.
+    This helps improve search results for queries with non-English characters.
+    """
+    # First try with the query as is
+    return unicodedata.normalize('NFKD', query).encode('ASCII', 'ignore').decode('ASCII')
 
 #
 # GOOGLE controller
@@ -32,7 +41,17 @@ async def google_search_controller(query: str, max_results: int, timeframe: str 
     if max_results < 1 or max_results > 1000:
         raise HTTPException(status_code=400, detail="max_results must be between 1 and 1000.")
     try:
+        # First try with the original query
         search_results, effective_tf = await google_service.google_search(query, max_results, timeframe)
+        
+        # If no results, try with normalized query (convert accented chars to non-accented)
+        if not search_results and any(c not in "abcdefghijklmnopqrstuvwxyz0123456789 " for c in query.lower()):
+            normalized_query = normalize_query(query)
+            if normalized_query != query:
+                logger.info("No results with original query, trying normalized query", 
+                           extra={"original": query, "normalized": normalized_query})
+                search_results, effective_tf = await google_service.google_search(normalized_query, max_results, timeframe)
+        
         response_payload = {"results": search_results, "timeframe": effective_tf}
         if config.enable_debug:
             logger.debug("DEBUG OUTPUT google_search_controller", extra=response_payload)
@@ -91,7 +110,18 @@ async def fetch_search_tweets(request: Request):
         query = request.query_params.get("q", "")
         count = int(request.query_params.get("count", "10"))
         mode = request.query_params.get("mode", SearchMode.Latest.value)
+        
+        # Try with original query first
         response = await twitter_service.fetch_search_tweets(query, count, mode)
+        
+        # If no results, try with normalized query
+        if not response.tweets and any(c not in "abcdefghijklmnopqrstuvwxyz0123456789 " for c in query.lower()):
+            normalized_query = normalize_query(query)
+            if normalized_query != query:
+                logger.info("No results with original query, trying normalized query", 
+                           extra={"original": query, "normalized": normalized_query})
+                response = await twitter_service.fetch_search_tweets(normalized_query, count, mode)
+                
         return {"tweets": [t.dict(exclude_none=True) for t in response.tweets]}
     except Exception as e:
         logger.error("Error fetching search tweets",
