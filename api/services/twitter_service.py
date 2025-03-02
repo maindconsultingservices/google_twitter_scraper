@@ -152,15 +152,6 @@ class TwitterClientManager:
                         data_dir=output_dir,
                         cfg=console_only_logger
                     )
-                except Exception as
-                    self._search = Search(
-                        cookies=self._cookies_store,
-                        save=False,
-                        debug=False,
-                        output_dir=output_dir,
-                        data_dir=output_dir,
-                        cfg=console_only_logger
-                    )
                 except Exception as e:
                     tb = traceback.format_exc()
                     logger.error("Exception creating Search with stored cookies", extra={"error": str(e), "traceback": tb})
@@ -740,4 +731,4 @@ class TwitterService:
         return found
 
 # Create the singleton instance
-twitter_service = TwitterService()  
+twitter_service = TwitterService()
