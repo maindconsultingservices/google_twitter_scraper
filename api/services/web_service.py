@@ -1,4 +1,3 @@
-# api/services/web_service.py
 import os
 import time
 import json
@@ -33,25 +32,106 @@ class WebService:
     def __init__(self):
         self.rate_limiter = RateLimiter(5, 60_000)
         # This session will handle CF challenge flows automatically and maintain cookies between requests.
-        self.scraper = cloudscraper.create_scraper()
-        self.scraper.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        self.scraper = self._create_scraper()
+        # Add a dedicated rate limiter for Venice API calls (20 per minute per user)
+        self.venice_rate_limiter = RateLimiter(20, 60_000)
+        
+    def _create_scraper(self):
+        """Create a new cloudscraper instance with optimal settings"""
+        # Define a list of common user agents to rotate between
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Safari/605.1.15",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 Edg/116.0.1938.69",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0"
+        ]
+        
+        # Select a random user agent
+        user_agent = random.choice(user_agents)
+        
+        # Create the scraper with enhanced settings
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'desktop': True,
+                'mobile': False
+            },
+            delay=5  # Allow more time for challenge solving
+        )
+        
+        # Set headers to mimic a real browser more closely
+        scraper.headers.update({
+            "User-Agent": user_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br",
             "Referer": "https://www.google.com/",
-            "Connection": "keep-alive"
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "cross-site",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0"
         })
-        # Add a dedicated rate limiter for Venice API calls (20 per minute per user)
-        self.venice_rate_limiter = RateLimiter(20, 60_000)
+        
+        return scraper
 
     def _is_valid_url(self, url: str) -> bool:
-        from urllib.parse import urlparse
+        """
+        Checks if the URL is valid.
+        """
         try:
             parsed = urlparse(url)
             return bool(parsed.scheme and parsed.netloc)
         except Exception:
             return False
+
+    def _is_readable(self, text: str) -> bool:
+        """
+        Determines if the extracted text content is readable.
+        """
+        if not text or len(text.strip()) < 50:  # Require at least 50 chars of content
+            return False
+            
+        # If more than 30% of the characters are the replacement character "�", consider it unreadable
+        # (Increased from 20% to 30% to be more lenient)
+        if text.count("�") / len(text) > 0.3:
+            return False
+            
+        # Check for common indicators of failed scraping
+        low_content_markers = [
+            "access denied",
+            "captcha required",
+            "please enable javascript",
+            "please enable cookies",
+            "bot protection",
+            "ddos protection",
+            "blocked",
+            "attention required",
+            "cloudflare",
+            "human verification",
+        ]
+        
+        # Only consider it unreadable if the text is very short AND contains low content markers
+        lower_text = text.lower()
+        if len(text) < 500 and any(marker in lower_text for marker in low_content_markers):
+            return False
+            
+        # New: Check for actual content presence
+        # If the text has reasonable length and contains sentences, it's likely readable
+        if len(text) > 200 and "." in text and " " in text:
+            sentence_count = text.count(".") + text.count("!") + text.count("?")
+            if sentence_count > 3:  # At least a few sentences found
+                return True
+                
+        # If we have substantial text, consider it readable even without sentences
+        if len(text) > 500:
+            return True
+            
+        return True  # Default to accepting content unless explicitly filtered
 
     async def _scrape_single_url(self, url: str, query: str) -> Dict[str, Any]:
         # Check for empty or invalid URL
@@ -82,29 +162,59 @@ class WebService:
             "IsQueryRelated": False,
             "relatedURLs": []
         }
+        
+        # Try to get cached result
         if self.rate_limiter.redis_client:
             try:
                 cached = await self.rate_limiter.safe_execute('get', f"scrape:{url}")
+                if cached:
+                    logger.debug("Returning cached scrape result", extra={"url": url})
+                    return json.loads(cached)
             except Exception as e:
                 if config.enable_debug:
                     logger.exception("Redis error in caching get")
                 else:
                     logger.error("Redis error in caching get", extra={"error": str(e)})
-                cached = None
-            if cached:
-                logger.debug("Returning cached scrape result", extra={"url": url})
-                return json.loads(cached)
+        
         try:
             logger.debug("Starting scraping URL", extra={"url": url})
             # Introduce a random delay to mimic human behavior (jitter)
             await asyncio.sleep(random.uniform(0.5, 1.5))
-            start_time = time.time()
-            response = await run_in_threadpool(lambda: self.scraper.get(url, timeout=10))
+            
+            # Attempt to refresh the scraper if needed (every 5-10 requests)
+            if random.randint(1, 10) <= 2:  # 20% chance
+                self.scraper = self._create_scraper()
+            
+            max_retries = 2
+            current_retry = 0
+            
+            while current_retry <= max_retries:
+                try:
+                    start_time = time.time()
+                    response = await run_in_threadpool(
+                        lambda: self.scraper.get(
+                            url, 
+                            timeout=15,  # Increased timeout
+                            allow_redirects=True
+                        )
+                    )
+                    break  # Exit retry loop on success
+                except Exception as e:
+                    current_retry += 1
+                    if current_retry > max_retries:
+                        raise  # Re-raise if we've exhausted retries
+                    logger.warning(f"Retry {current_retry}/{max_retries} for URL {url}: {str(e)}")
+                    # Create a fresh scraper for the retry
+                    self.scraper = self._create_scraper()
+                    await asyncio.sleep(1)  # Short delay before retry
+            
             # Force correct encoding based on apparent encoding
             response.encoding = response.apparent_encoding
             duration = time.time() - start_time
             logger.debug("Finished scraping URL", extra={"url": url, "duration": duration, "status_code": response.status_code})
+            
             single_result["status"] = response.status_code
+            
             if response.status_code == 200:
                 if not response.text or response.text.strip() == "":
                     logger.error("Empty response text received, possibly due to anti-bot block or network issue", extra={"url": url})
@@ -112,44 +222,64 @@ class WebService:
                 else:
                     # Parse HTML content
                     soup = BeautifulSoup(response.text, "html.parser")
+                    
+                    # Extract title - try multiple approaches
                     title_tag = soup.find("title")
-                    meta_desc_tag = soup.find("meta", attrs={"name": "description"})
-                    full_text = soup.get_text(separator=" ", strip=True)
-                    # Check for common anti-bot markers only if title is missing or appears invalid
-                    anti_bot_markers = ["access denied", "captcha", "bot check"]
-                    lower_text = response.text.lower()
-                    if any(marker in lower_text for marker in anti_bot_markers):
-                        if not title_tag or len(title_tag.get_text(strip=True)) < 5:
-                            logger.error("Response indicates possible anti-bot protection", extra={"url": url, "response_snippet": response.text[:500]})
-                            single_result["error"] = "Anti-bot protection triggered"
-                        else:
-                            single_result["error"] = None
-                    else:
-                        single_result["error"] = None
                     if not title_tag:
-                        logger.warning("No title found in HTML, unexpected HTML structure", extra={"url": url, "html_snippet": response.text[:300]})
-                        logger.debug("Full HTML content for debugging", extra={"url": url, "html": response.text})
-                    single_result["title"] = title_tag.get_text(strip=True) if title_tag else ""
+                        # Try to find the most prominent heading if no title
+                        for heading in ["h1", "h2", "h3"]:
+                            heading_tag = soup.find(heading)
+                            if heading_tag:
+                                title_tag = heading_tag
+                                break
+                    
+                    # Extract meta description
+                    meta_desc_tag = soup.find("meta", attrs={"name": "description"})
+                    if not meta_desc_tag:
+                        # Try alternative meta tags
+                        meta_desc_tag = soup.find("meta", attrs={"property": "og:description"})
+                    
+                    # Extract text
+                    # Remove script and style tags first to clean up content
+                    for script_or_style in soup(["script", "style", "noscript", "iframe"]):
+                        script_or_style.extract()
+                    
+                    # Get text content with sensible spacing
+                    full_text = soup.get_text(separator=" ", strip=True)
+                    
+                    # Check if content is readable
+                    if not self._is_readable(full_text):
+                        logger.warning("Content from URL is not readable", extra={"url": url})
+                        single_result["error"] = "Content not readable or blocked by anti-bot measures"
+                        # Return partial result instead of None
+                        if title_tag and title_tag.get_text(strip=True):
+                            single_result["title"] = title_tag.get_text(strip=True)
+                        if meta_desc_tag and meta_desc_tag.get("content"):
+                            single_result["metaDescription"] = meta_desc_tag["content"].strip()
+                        
+                        # Even for unreadable content, return what we have
+                        return single_result
+                    
+                    # Set title and description
+                    if title_tag:
+                        single_result["title"] = title_tag.get_text(strip=True)
+                    else:
+                        # Use URL domain as fallback title
+                        domain = urlparse(url).netloc
+                        single_result["title"] = f"Content from {domain}"
+                        
                     if meta_desc_tag and meta_desc_tag.get("content"):
                         single_result["metaDescription"] = meta_desc_tag["content"].strip()
-                    if full_text:
-                        def is_readable(text: str) -> bool:
-                            if not text:
-                                return False
-                            # If more than 20% of the characters are the replacement character "�", consider it unreadable
-                            if text.count("�") / len(text) > 0.2:
-                                return False
-                            return True
-                        if not is_readable(full_text):
-                            logger.warning("Content from URL is unreadable, ignoring", extra={"url": url})
-                            return None
-                        # --------------------------------
-                        single_result["textPreview"] = full_text[:200]
-                        single_result["fullText"] = full_text
-                        summary, is_query_related, related_urls = await self.summarize_text(full_text, query)
-                        single_result["Summary"] = summary
-                        single_result["IsQueryRelated"] = is_query_related
-                        single_result["relatedURLs"] = related_urls
+                    
+                    # Set text content
+                    single_result["textPreview"] = full_text[:200]
+                    single_result["fullText"] = full_text
+                    
+                    # Generate summary and related info
+                    summary, is_query_related, related_urls = await self.summarize_text(full_text, query)
+                    single_result["Summary"] = summary
+                    single_result["IsQueryRelated"] = is_query_related
+                    single_result["relatedURLs"] = related_urls
             else:
                 single_result["error"] = f"Non-200 status code: {response.status_code}"
                 logger.warning("Non-200 response while scraping URL", extra={
@@ -162,6 +292,8 @@ class WebService:
             tb = traceback.format_exc()
             logger.error("Error scraping URL", extra={"url": url, "error": str(exc), "traceback": tb})
             single_result["error"] = str(exc)
+        
+        # Cache the result
         if self.rate_limiter.redis_client:
             try:
                 await self.rate_limiter.safe_execute('set', f"scrape:{url}", json.dumps(single_result), ex=60)
@@ -170,21 +302,47 @@ class WebService:
                     logger.exception("Redis error in caching set")
                 else:
                     logger.error("Redis error in caching set", extra={"error": str(e)})
+                    
         return single_result
 
     async def scrape_urls(self, urls: List[str], query: str) -> List[Dict[str, Any]]:
         logger.debug("WebService: scrape_urls called", extra={"urls": urls, "query": query})
         await self.rate_limiter.check()
+        
         # Filter out invalid URLs to avoid calling the scrape logic on nonsense values.
-        urls = [url for url in urls if self._is_valid_url(url)]
-        sem = asyncio.Semaphore(10)
+        valid_urls = [url for url in urls if self._is_valid_url(url)]
+        
+        if not valid_urls:
+            logger.warning("No valid URLs provided for scraping")
+            return []
+            
+        # Use a semaphore to limit concurrent scraping
+        sem = asyncio.Semaphore(8)  # Reduced from 10 to 8 to be more gentle
+        
         async def sem_scrape(url):
             async with sem:
                 return await self._scrape_single_url(url, query)
-        results = await asyncio.gather(*(sem_scrape(url) for url in urls))
-        # Filter out entries that are None (i.e. unreadable content)
-        results = [r for r in results if r is not None]
-        return results
+        
+        # Gather results with a timeout for the entire operation
+        try:
+            # Set a reasonable timeout for the entire batch
+            timeout = max(30, min(len(valid_urls) * 5, 120))  # Between 30s and 120s based on URL count
+            results = await asyncio.wait_for(
+                asyncio.gather(*(sem_scrape(url) for url in valid_urls)),
+                timeout=timeout
+            )
+            
+            # Ensure no None values in results
+            results = [r for r in results if r is not None]
+            return results
+            
+        except asyncio.TimeoutError:
+            logger.error(f"Scraping timed out after {timeout}s for {len(valid_urls)} URLs")
+            # For partially completed results, gather what we have
+            return [r for r in [await sem_scrape(url) for url in valid_urls[:3]] if r is not None]
+        except Exception as e:
+            logger.error(f"Error in scrape_urls: {str(e)}", exc_info=True)
+            return []
 
     async def summarize_text(self, text: str, query: str) -> Tuple[str, bool, List[str]]:
         """
@@ -326,4 +484,3 @@ class EmailService:
 # Create the singleton instances
 web_service = WebService()
 email_service = EmailService()
-                                           
