@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from .middlewares import require_api_key
 from .controllers import (
     google_search_controller,
+    google_search_and_scrape_controller,
     get_user_tweets,
     fetch_home_timeline,
     fetch_following_timeline,
@@ -50,6 +51,36 @@ async def google_search_route(
             sites_query = f"site:{sites[0]}"
         query = f"{query} {sites_query}"
     return await google_search_controller(query, max_results, timeframe)
+
+@google_router.get("/search_and_scrape")
+async def google_search_and_scrape_route(
+    user_request: Request,
+    query: str,
+    max_results: int = 10,
+    sites: List[str] = Query(None),
+    timeframe: str = None,
+    _=Depends(require_api_key)
+):
+    """
+    GET /google/search_and_scrape => run google_search_and_scrape_controller
+    Performs a Google search and then scrapes the resulting URLs.
+    
+    Optionally restricts the search to one or several sites by using the "sites" query parameter.
+    When multiple sites are provided, they are grouped using parentheses and joined with the OR operator.
+    
+    A query parameter "timeframe" (allowed values: "24h", "week", "month", "year") enables time-based filtering.
+    """
+    logger.debug("Route GET /google/search_and_scrape called", 
+                extra={"query": query, "max_results": max_results, "sites": sites, "timeframe": timeframe})
+    
+    if sites:
+        if len(sites) > 1:
+            sites_query = "(" + " OR ".join(f"site:{s}" for s in sites) + ")"
+        else:
+            sites_query = f"site:{sites[0]}"
+        query = f"{query} {sites_query}"
+        
+    return await google_search_and_scrape_controller(query, max_results, timeframe)
 
 # ------------------ TWITTER ROUTES ------------------
 @twitter_router.get("/user/{user_id}/tweets")
