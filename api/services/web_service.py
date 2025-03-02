@@ -1,4 +1,3 @@
-# api/services/web_service.py
 import os
 import time
 import json
@@ -7,7 +6,7 @@ import asyncio
 import random
 import re
 from typing import List, Dict, Any, Tuple, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, quote
 
 from fastapi.concurrency import run_in_threadpool
 import cloudscraper
@@ -90,11 +89,143 @@ class WebService:
         except Exception:
             return False
 
-    def _is_readable(self, text: str) -> bool:
+    def _is_special_url(self, url: str) -> bool:
+        """
+        Checks if the URL is a special case that needs custom handling.
+        Returns True for sites known to be difficult to scrape normally.
+        """
+        special_domains = [
+            "youtube.com", "youtu.be",
+            "twitter.com", "x.com",
+            "facebook.com", "fb.com",
+            "instagram.com",
+            "tiktok.com",
+            "linkedin.com",
+            "reddit.com",
+            "google.com"
+        ]
+        
+        try:
+            domain = urlparse(url).netloc.lower()
+            return any(special in domain for special in special_domains)
+        except Exception:
+            return False
+
+    def _extract_metadata_from_special_url(self, url: str) -> Dict[str, str]:
+        """
+        Extract title and basic information from special URLs that can't be scraped directly.
+        """
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        path = parsed.path
+        query = parse_qs(parsed.query)
+        
+        # Default response
+        metadata = {
+            "title": "",
+            "description": "",
+            "content_type": "unknown"
+        }
+        
+        # YouTube handling
+        if "youtube.com" in domain or "youtu.be" in domain:
+            metadata["content_type"] = "video"
+            
+            # Extract video ID
+            video_id = ""
+            if "youtube.com" in domain and "/watch" in path:
+                video_id = query.get("v", [""])[0]
+            elif "youtu.be" in domain:
+                video_id = path.strip("/")
+            
+            if video_id:
+                metadata["title"] = f"YouTube Video (ID: {video_id})"
+                metadata["description"] = f"This is a YouTube video link. Video ID: {video_id}"
+        
+        # Twitter/X handling
+        elif "twitter.com" in domain or "x.com" in domain:
+            metadata["content_type"] = "tweet"
+            
+            # Extract tweet info
+            if "/status/" in path:
+                parts = path.strip("/").split("/")
+                if len(parts) >= 3:
+                    user = parts[0]
+                    tweet_id = parts[2]
+                    metadata["title"] = f"Tweet by @{user}"
+                    metadata["description"] = f"Tweet ID: {tweet_id} by user @{user}"
+                else:
+                    metadata["title"] = "Twitter/X Post"
+                    metadata["description"] = "A post on Twitter/X"
+            else:
+                # Likely a profile
+                username = path.strip("/")
+                if username:
+                    metadata["title"] = f"Twitter/X Profile: @{username}"
+                    metadata["description"] = f"Twitter/X profile for user @{username}"
+                else:
+                    metadata["title"] = "Twitter/X"
+                    metadata["description"] = "Twitter/X social media platform"
+        
+        # Facebook handling
+        elif "facebook.com" in domain or "fb.com" in domain:
+            metadata["content_type"] = "facebook"
+            
+            if "/profile/" in path or path.count("/") == 1:
+                user_id = path.strip("/").split("/")[-1]
+                metadata["title"] = f"Facebook Profile: {user_id}"
+                metadata["description"] = f"Facebook profile page for {user_id}"
+            else:
+                metadata["title"] = "Facebook Content"
+                metadata["description"] = "Content on Facebook social media platform"
+        
+        # Google handling
+        elif "google.com" in domain:
+            metadata["content_type"] = "google"
+            
+            if "/search" in path:
+                q = query.get("q", [""])[0]
+                if q:
+                    metadata["title"] = f"Google Search: {q}"
+                    metadata["description"] = f"Google search results for query: {q}"
+                else:
+                    metadata["title"] = "Google Search"
+                    metadata["description"] = "Google search results page"
+            else:
+                metadata["title"] = "Google"
+                metadata["description"] = "Google website"
+        
+        # Default handling for other domains
+        else:
+            domain_name = domain.replace("www.", "")
+            metadata["title"] = f"Content from {domain_name}"
+            metadata["description"] = f"Web content from {domain_name}"
+        
+        return metadata
+
+    def _is_readable(self, text: str, url: str) -> bool:
         """
         Determines if the extracted text content is readable.
+        Takes URL into account for special cases.
         """
-        if not text or len(text.strip()) < 50:  # Require at least 50 chars of content
+        # Special handling for known domains
+        domain = urlparse(url).netloc.lower()
+        
+        # Be more lenient with certain domains known to have valid but minimal content
+        lenient_domains = [
+            "gov", "gob", "gouv", "moncloa", "parliament",
+            "guardian", "nytimes", "washingtonpost", "euractiv"
+        ]
+        
+        # Check if we should be more lenient
+        is_lenient = any(ld in domain for ld in lenient_domains)
+        
+        # YouTube, social media, etc. often don't provide good text content via scraping
+        if self._is_special_url(url):
+            # For special URLs with minimal content, accept what we can get
+            return len(text.strip()) > 20
+            
+        if not text or len(text.strip()) < (30 if is_lenient else 50):
             return False
             
         # If more than 30% of the characters are the replacement character "�", consider it unreadable
@@ -117,26 +248,30 @@ class WebService:
         
         # Only consider it unreadable if the text is very short AND contains low content markers
         lower_text = text.lower()
-        if len(text) < 500 and any(marker in lower_text for marker in low_content_markers):
+        if len(text) < 300 and any(marker in lower_text for marker in low_content_markers):
             return False
             
-        # New: Check for actual content presence
+        # For lenient domains, be more accepting
+        if is_lenient and len(text) > 100:
+            return True
+            
         # If the text has reasonable length and contains sentences, it's likely readable
-        if len(text) > 200 and "." in text and " " in text:
+        if len(text) > 150 and "." in text and " " in text:
             sentence_count = text.count(".") + text.count("!") + text.count("?")
-            if sentence_count > 3:  # At least a few sentences found
+            if sentence_count > 2:  # At least a few sentences found
                 return True
                 
         # If we have substantial text, consider it readable even without sentences
-        if len(text) > 500:
+        if len(text) > 300:
             return True
             
-        return True  # Default to accepting content unless explicitly filtered
+        return is_lenient  # For lenient domains, accept by default; otherwise, reject
 
     async def _scrape_single_url(self, url: str, query: str) -> Dict[str, Any]:
         """
         Scrape a single URL and return structured content.
         Never returns None - always returns a structured result with appropriate error info.
+        Special handling for problematic sites like YouTube, Twitter, etc.
         """
         # Initialize with default values. Note: error is None if no error occurs.
         single_result = {
@@ -159,9 +294,10 @@ class WebService:
             return single_result
         
         # Try to get cached result
+        cache_key = f"scrape:{url}"
         if self.rate_limiter.redis_client:
             try:
-                cached = await self.rate_limiter.safe_execute('get', f"scrape:{url}")
+                cached = await self.rate_limiter.safe_execute('get', cache_key)
                 if cached:
                     logger.debug("Returning cached scrape result", extra={"url": url})
                     return json.loads(cached)
@@ -171,12 +307,41 @@ class WebService:
                 else:
                     logger.error("Redis error in caching get", extra={"error": str(e)})
         
+        # Check if this is a special URL that needs custom handling
+        is_special = self._is_special_url(url)
+        if is_special:
+            logger.info(f"Special URL detected: {url}, using metadata extraction")
+            metadata = self._extract_metadata_from_special_url(url)
+            single_result["title"] = metadata["title"]
+            single_result["metaDescription"] = metadata["description"]
+            single_result["textPreview"] = metadata["description"]
+            single_result["status"] = 200  # Simulate success
+            
+            # For some special URLs, we can make an educated guess about query relevance
+            # based on the URL itself rather than content
+            query_terms = query.lower().split()
+            url_lower = url.lower()
+            is_query_in_url = any(term in url_lower for term in query_terms if len(term) > 3)
+            single_result["IsQueryRelated"] = is_query_in_url
+            
+            # Add minimal summary
+            single_result["Summary"] = f"This is content from {metadata['content_type']} which may require interactive browsing. {metadata['description']}"
+            
+            # Cache this result too
+            if self.rate_limiter.redis_client:
+                try:
+                    await self.rate_limiter.safe_execute('set', cache_key, json.dumps(single_result), ex=60)
+                except Exception as e:
+                    logger.error("Redis error in caching special URL", extra={"error": str(e)})
+            
+            return single_result
+        
         try:
             logger.debug("Starting scraping URL", extra={"url": url})
             # Introduce a random delay to mimic human behavior (jitter)
             await asyncio.sleep(random.uniform(0.5, 1.5))
             
-            # Attempt to refresh the scraper if needed (every 5-10 requests)
+            # Occasionally refresh the scraper
             if random.randint(1, 10) <= 2:  # 20% chance
                 self.scraper = self._create_scraper()
             
@@ -243,14 +408,32 @@ class WebService:
                     full_text = soup.get_text(separator=" ", strip=True)
                     
                     # Check if content is readable
-                    if not self._is_readable(full_text):
+                    if not self._is_readable(full_text, url):
                         logger.warning("Content from URL is not readable", extra={"url": url})
                         single_result["error"] = "Content not readable or blocked by anti-bot measures"
+                        
                         # Set title and description even for unreadable content
                         if title_tag and hasattr(title_tag, 'get_text'):
                             single_result["title"] = title_tag.get_text(strip=True)
                         if meta_desc_tag and meta_desc_tag.get("content"):
                             single_result["metaDescription"] = meta_desc_tag["content"].strip()
+                            
+                        # If we don't have a title or meta description, use domain info
+                        if not single_result["title"]:
+                            domain = urlparse(url).netloc
+                            single_result["title"] = f"Content from {domain}"
+                        
+                        # Make a basic guess about query relatedness based on URL and any text we did get
+                        query_words = query.lower().split()
+                        url_lower = url.lower()
+                        text_lower = full_text.lower()
+                        is_related = any(word in url_lower or word in text_lower 
+                                        for word in query_words if len(word) > 3)
+                        single_result["IsQueryRelated"] = is_related
+                        
+                        # Provide at least some content
+                        single_result["textPreview"] = full_text[:200] if full_text else "No preview available"
+                        
                     else:
                         # Set title and description
                         if title_tag and hasattr(title_tag, 'get_text'):
@@ -278,6 +461,13 @@ class WebService:
                                 single_result["Summary"] = summary
                                 single_result["IsQueryRelated"] = is_query_related
                                 single_result["relatedURLs"] = related_urls
+                            else:
+                                # For short content, make a simple determination
+                                query_words = query.lower().split()
+                                text_lower = full_text.lower()
+                                is_related = any(word in text_lower for word in query_words if len(word) > 3)
+                                single_result["IsQueryRelated"] = is_related
+                                single_result["Summary"] = "Content too brief for detailed summary."
                         except Exception as e:
                             logger.error(f"Error summarizing content for {url}: {str(e)}")
                             # Don't fail the entire operation for summary errors
@@ -291,10 +481,31 @@ class WebService:
                     "status_code": response.status_code,
                     "headers": dict(response.headers),
                 })
+                
+                # Even with an error, try to provide some useful metadata
+                domain = urlparse(url).netloc
+                single_result["title"] = f"Content from {domain} (Status: {response.status_code})"
+                
+                # Make basic query relatedness guess from URL
+                query_words = query.lower().split()
+                url_lower = url.lower()
+                is_related = any(word in url_lower for word in query_words if len(word) > 3)
+                single_result["IsQueryRelated"] = is_related
+                
         except Exception as exc:
             tb = traceback.format_exc()
             logger.error("Error scraping URL", extra={"url": url, "error": str(exc), "traceback": tb})
             single_result["error"] = str(exc)
+            
+            # Provide minimal information even on error
+            domain = urlparse(url).netloc
+            single_result["title"] = f"Content from {domain} (Error)"
+            
+            # Make basic query relatedness guess from URL
+            query_words = query.lower().split()
+            url_lower = url.lower()
+            is_related = any(word in url_lower for word in query_words if len(word) > 3)
+            single_result["IsQueryRelated"] = is_related
         
         # Cache the result if we have Redis configured
         if self.rate_limiter.redis_client:
@@ -304,7 +515,7 @@ class WebService:
                     # Serialize JSON safely
                     try:
                         json_data = json.dumps(single_result)
-                        await self.rate_limiter.safe_execute('set', f"scrape:{url}", json_data, ex=60)
+                        await self.rate_limiter.safe_execute('set', cache_key, json_data, ex=60)
                     except Exception as e:
                         logger.error(f"Could not serialize result for caching: {str(e)}")
             except Exception as e:
@@ -321,6 +532,21 @@ class WebService:
         Implements safeguards to prevent timeouts and broken pipes.
         """
         logger.debug("WebService: scrape_urls called", extra={"urls": urls, "query": query})
+        
+        try:
+            # URL-decode the query if it contains URL-encoded characters
+            if "%" in query:
+                query = quote(query)
+                try:
+                    # Try to decode it if it's URL encoded
+                    from urllib.parse import unquote
+                    query = unquote(query)
+                except:
+                    # If decoding fails, use as is
+                    pass
+        except:
+            # If any error occurs, use the query as is
+            pass
         
         # Apply rate limiting
         try:
@@ -345,7 +571,7 @@ class WebService:
             valid_urls = valid_urls[:10]
             
         # Use a semaphore to limit concurrent scraping
-        sem = asyncio.Semaphore(5)  # Reduced from 10 to 5 to be more conservative
+        sem = asyncio.Semaphore(5)  # Conservative limit
         
         async def sem_scrape(url):
             try:
@@ -361,11 +587,11 @@ class WebService:
                     "url": url,
                     "status": 0,
                     "error": "Scraping timed out after 20 seconds",
-                    "title": "",
+                    "title": f"Content from {urlparse(url).netloc} (Timeout)",
                     "metaDescription": "",
                     "textPreview": "",
                     "fullText": "",
-                    "Summary": "",
+                    "Summary": "Scraping timed out",
                     "IsQueryRelated": False,
                     "relatedURLs": []
                 }
@@ -375,11 +601,11 @@ class WebService:
                     "url": url,
                     "status": 0,
                     "error": f"Scraping failed: {str(e)}",
-                    "title": "",
+                    "title": f"Content from {urlparse(url).netloc} (Error)",
                     "metaDescription": "",
                     "textPreview": "",
                     "fullText": "",
-                    "Summary": "",
+                    "Summary": f"Error scraping content: {str(e)}",
                     "IsQueryRelated": False,
                     "relatedURLs": []
                 }
@@ -402,9 +628,9 @@ class WebService:
             # Limit the size of responses to prevent payload size issues
             for result in results:
                 # Keep summaries and previews reasonable
-                if 'Summary' in result and len(result['Summary']) > 1000:
+                if 'Summary' in result and result['Summary'] and len(result['Summary']) > 1000:
                     result['Summary'] = result['Summary'][:1000] + "..."
-                if 'fullText' in result and len(result['fullText']) > 5000:
+                if 'fullText' in result and result['fullText'] and len(result['fullText']) > 5000:
                     result['fullText'] = result['fullText'][:5000] + "..."
             
             return results
@@ -417,11 +643,11 @@ class WebService:
                     "url": url,
                     "status": 0,
                     "error": "Batch processing timed out",
-                    "title": "",
+                    "title": f"Content from {urlparse(url).netloc} (Batch Timeout)",
                     "metaDescription": "",
                     "textPreview": "",
                     "fullText": "",
-                    "Summary": "",
+                    "Summary": "Processing timed out",
                     "IsQueryRelated": False,
                     "relatedURLs": []
                 }
@@ -435,11 +661,11 @@ class WebService:
                     "url": url,
                     "status": 0,
                     "error": f"Batch processing error: {str(e)}",
-                    "title": "",
+                    "title": f"Content from {urlparse(url).netloc} (Error)",
                     "metaDescription": "",
                     "textPreview": "",
                     "fullText": "",
-                    "Summary": "",
+                    "Summary": f"Error: {str(e)}",
                     "IsQueryRelated": False,
                     "relatedURLs": []
                 }
