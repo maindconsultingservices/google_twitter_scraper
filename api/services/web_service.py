@@ -1,4 +1,3 @@
-# api/services/web_service.py
 import os
 import time
 import json
