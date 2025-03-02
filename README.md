@@ -13,6 +13,7 @@ To be deployed on Vercel functions, on several different regions at the same tim
 The application is configured using environment variables (via a `.env` file). Key configuration options include:
 
 - **X_API_KEY**: API key required in request headers.
+- **X_API_KEY_2**: Alternative API key that works identically to X_API_KEY. Either key can be used for authentication.
 - **TWITTER_COOKIES_JSON**: Twitter cookies in JSON format for authentication.
 - **ENABLE_DEBUG**: Enable debug logging.
 - **VENICE_API_KEY**, **VENICE_MODEL**, **VENICE_URL**, **VENICE_TEMPERATURE**: Configuration for the Venice.ai API used to summarize text.
