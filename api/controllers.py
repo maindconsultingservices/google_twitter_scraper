@@ -5,7 +5,7 @@ import unicodedata
 load_dotenv()
 
 from fastapi import Request, HTTPException
-from typing import List
+from typing import List, Tuple
 from .services import google_service, twitter_service, web_service
 from .utils import logger
 from .types import SearchMode
