@@ -1,3 +1,4 @@
+# api/services/web_service.py
 import os
 import time
 import json
@@ -97,8 +98,7 @@ class WebService:
             return False
             
         # If more than 30% of the characters are the replacement character "�", consider it unreadable
-        # (Increased from 20% to 30% to be more lenient)
-        if text.count("�") / len(text) > 0.3:
+        if text.count("�") / max(len(text), 1) > 0.3:
             return False
             
         # Check for common indicators of failed scraping
@@ -134,21 +134,10 @@ class WebService:
         return True  # Default to accepting content unless explicitly filtered
 
     async def _scrape_single_url(self, url: str, query: str) -> Dict[str, Any]:
-        # Check for empty or invalid URL
-        if not url or not isinstance(url, str) or url.strip() == "":
-            logger.error("Empty or invalid URL provided for scraping")
-            return {
-                "url": url,
-                "status": 0,
-                "error": "Empty or invalid URL provided",
-                "metaDescription": "",
-                "textPreview": "",
-                "title": "",
-                "fullText": "",
-                "Summary": "",
-                "IsQueryRelated": False,
-                "relatedURLs": []
-            }
+        """
+        Scrape a single URL and return structured content.
+        Never returns None - always returns a structured result with appropriate error info.
+        """
         # Initialize with default values. Note: error is None if no error occurs.
         single_result = {
             "url": url,
@@ -162,6 +151,12 @@ class WebService:
             "IsQueryRelated": False,
             "relatedURLs": []
         }
+        
+        # Check for empty or invalid URL
+        if not url or not isinstance(url, str) or url.strip() == "":
+            logger.error("Empty or invalid URL provided for scraping")
+            single_result["error"] = "Empty or invalid URL provided"
+            return single_result
         
         # Try to get cached result
         if self.rate_limiter.redis_client:
@@ -251,52 +246,67 @@ class WebService:
                     if not self._is_readable(full_text):
                         logger.warning("Content from URL is not readable", extra={"url": url})
                         single_result["error"] = "Content not readable or blocked by anti-bot measures"
-                        # Return partial result instead of None
-                        if title_tag and title_tag.get_text(strip=True):
+                        # Set title and description even for unreadable content
+                        if title_tag and hasattr(title_tag, 'get_text'):
                             single_result["title"] = title_tag.get_text(strip=True)
                         if meta_desc_tag and meta_desc_tag.get("content"):
                             single_result["metaDescription"] = meta_desc_tag["content"].strip()
-                        
-                        # Even for unreadable content, return what we have
-                        return single_result
-                    
-                    # Set title and description
-                    if title_tag:
-                        single_result["title"] = title_tag.get_text(strip=True)
                     else:
-                        # Use URL domain as fallback title
-                        domain = urlparse(url).netloc
-                        single_result["title"] = f"Content from {domain}"
+                        # Set title and description
+                        if title_tag and hasattr(title_tag, 'get_text'):
+                            single_result["title"] = title_tag.get_text(strip=True)
+                        else:
+                            # Use URL domain as fallback title
+                            domain = urlparse(url).netloc
+                            single_result["title"] = f"Content from {domain}"
+                            
+                        if meta_desc_tag and meta_desc_tag.get("content"):
+                            single_result["metaDescription"] = meta_desc_tag["content"].strip()
                         
-                    if meta_desc_tag and meta_desc_tag.get("content"):
-                        single_result["metaDescription"] = meta_desc_tag["content"].strip()
-                    
-                    # Set text content
-                    single_result["textPreview"] = full_text[:200]
-                    single_result["fullText"] = full_text
-                    
-                    # Generate summary and related info
-                    summary, is_query_related, related_urls = await self.summarize_text(full_text, query)
-                    single_result["Summary"] = summary
-                    single_result["IsQueryRelated"] = is_query_related
-                    single_result["relatedURLs"] = related_urls
+                        # Set text content
+                        single_result["textPreview"] = full_text[:200]
+                        single_result["fullText"] = full_text
+                        
+                        # Generate summary and related info
+                        try:
+                            # If text is overly long, truncate it
+                            text_to_summarize = full_text[:MAX_TEXT_LENGTH_TO_SUMMARIZE]
+                            
+                            # Only try to summarize if we have meaningful content
+                            if len(text_to_summarize) > 100:
+                                summary, is_query_related, related_urls = await self.summarize_text(text_to_summarize, query)
+                                single_result["Summary"] = summary
+                                single_result["IsQueryRelated"] = is_query_related
+                                single_result["relatedURLs"] = related_urls
+                        except Exception as e:
+                            logger.error(f"Error summarizing content for {url}: {str(e)}")
+                            # Don't fail the entire operation for summary errors
+                            single_result["Summary"] = "Error generating summary"
+                            # Make a best guess for query relatedness
+                            single_result["IsQueryRelated"] = query.lower() in full_text.lower()
             else:
                 single_result["error"] = f"Non-200 status code: {response.status_code}"
                 logger.warning("Non-200 response while scraping URL", extra={
                     "url": url,
                     "status_code": response.status_code,
                     "headers": dict(response.headers),
-                    "body_snippet": response.text[:500] if response.text else ""
                 })
         except Exception as exc:
             tb = traceback.format_exc()
             logger.error("Error scraping URL", extra={"url": url, "error": str(exc), "traceback": tb})
             single_result["error"] = str(exc)
         
-        # Cache the result
+        # Cache the result if we have Redis configured
         if self.rate_limiter.redis_client:
             try:
-                await self.rate_limiter.safe_execute('set', f"scrape:{url}", json.dumps(single_result), ex=60)
+                # Only cache successful or partially successful results
+                if single_result["status"] == 200:
+                    # Serialize JSON safely
+                    try:
+                        json_data = json.dumps(single_result)
+                        await self.rate_limiter.safe_execute('set', f"scrape:{url}", json_data, ex=60)
+                    except Exception as e:
+                        logger.error(f"Could not serialize result for caching: {str(e)}")
             except Exception as e:
                 if config.enable_debug:
                     logger.exception("Redis error in caching set")
@@ -306,43 +316,135 @@ class WebService:
         return single_result
 
     async def scrape_urls(self, urls: List[str], query: str) -> List[Dict[str, Any]]:
+        """
+        Scrape multiple URLs and return structured content.
+        Implements safeguards to prevent timeouts and broken pipes.
+        """
         logger.debug("WebService: scrape_urls called", extra={"urls": urls, "query": query})
-        await self.rate_limiter.check()
         
-        # Filter out invalid URLs to avoid calling the scrape logic on nonsense values.
+        # Apply rate limiting
+        try:
+            await self.rate_limiter.check()
+        except Exception as e:
+            logger.warning(f"Rate limit exceeded: {str(e)}")
+            # Return minimal response rather than failing
+            return [{"url": url, "status": 0, "error": "Rate limit exceeded", "title": "", 
+                     "metaDescription": "", "textPreview": "", "fullText": "", 
+                     "Summary": "", "IsQueryRelated": False, "relatedURLs": []} 
+                    for url in urls[:5]]  # Just return first 5 URLs with error
+        
+        # Validate and filter URLs
         valid_urls = [url for url in urls if self._is_valid_url(url)]
-        
         if not valid_urls:
             logger.warning("No valid URLs provided for scraping")
             return []
+        
+        # Limit number of URLs to prevent timeouts and resource exhaustion
+        if len(valid_urls) > 10:
+            logger.warning(f"Limiting scrape request from {len(valid_urls)} to 10 URLs")
+            valid_urls = valid_urls[:10]
             
         # Use a semaphore to limit concurrent scraping
-        sem = asyncio.Semaphore(8)  # Reduced from 10 to 8 to be more gentle
+        sem = asyncio.Semaphore(5)  # Reduced from 10 to 5 to be more conservative
         
         async def sem_scrape(url):
-            async with sem:
-                return await self._scrape_single_url(url, query)
+            try:
+                async with sem:
+                    # Set per-URL timeout to catch hanging requests
+                    return await asyncio.wait_for(
+                        self._scrape_single_url(url, query),
+                        timeout=20  # 20 seconds per URL max
+                    )
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout scraping URL: {url}")
+                return {
+                    "url": url,
+                    "status": 0,
+                    "error": "Scraping timed out after 20 seconds",
+                    "title": "",
+                    "metaDescription": "",
+                    "textPreview": "",
+                    "fullText": "",
+                    "Summary": "",
+                    "IsQueryRelated": False,
+                    "relatedURLs": []
+                }
+            except Exception as e:
+                logger.error(f"Error during scraping URL {url}: {str(e)}")
+                return {
+                    "url": url,
+                    "status": 0,
+                    "error": f"Scraping failed: {str(e)}",
+                    "title": "",
+                    "metaDescription": "",
+                    "textPreview": "",
+                    "fullText": "",
+                    "Summary": "",
+                    "IsQueryRelated": False,
+                    "relatedURLs": []
+                }
         
-        # Gather results with a timeout for the entire operation
+        # Execute scraping with overall timeout protection
         try:
             # Set a reasonable timeout for the entire batch
-            timeout = max(30, min(len(valid_urls) * 5, 120))  # Between 30s and 120s based on URL count
+            batch_timeout = min(len(valid_urls) * 5, 60)  # Between 5-60 seconds based on URL count
+            
+            # Execute all scraping tasks with timeout
+            tasks = [sem_scrape(url) for url in valid_urls]
             results = await asyncio.wait_for(
-                asyncio.gather(*(sem_scrape(url) for url in valid_urls)),
-                timeout=timeout
+                asyncio.gather(*tasks, return_exceptions=False),
+                timeout=batch_timeout
             )
             
-            # Ensure no None values in results
+            # Remove any None results (though this shouldn't happen anymore)
             results = [r for r in results if r is not None]
+            
+            # Limit the size of responses to prevent payload size issues
+            for result in results:
+                # Keep summaries and previews reasonable
+                if 'Summary' in result and len(result['Summary']) > 1000:
+                    result['Summary'] = result['Summary'][:1000] + "..."
+                if 'fullText' in result and len(result['fullText']) > 5000:
+                    result['fullText'] = result['fullText'][:5000] + "..."
+            
             return results
             
         except asyncio.TimeoutError:
-            logger.error(f"Scraping timed out after {timeout}s for {len(valid_urls)} URLs")
-            # For partially completed results, gather what we have
-            return [r for r in [await sem_scrape(url) for url in valid_urls[:3]] if r is not None]
+            logger.error(f"Batch scraping timed out after {batch_timeout}s for {len(valid_urls)} URLs")
+            # For timeout, return partial results for all URLs
+            return [
+                {
+                    "url": url,
+                    "status": 0,
+                    "error": "Batch processing timed out",
+                    "title": "",
+                    "metaDescription": "",
+                    "textPreview": "",
+                    "fullText": "",
+                    "Summary": "",
+                    "IsQueryRelated": False,
+                    "relatedURLs": []
+                }
+                for url in valid_urls
+            ]
         except Exception as e:
-            logger.error(f"Error in scrape_urls: {str(e)}", exc_info=True)
-            return []
+            logger.error(f"Error in batch scrape_urls: {str(e)}", exc_info=True)
+            # For general errors, return error results for all URLs
+            return [
+                {
+                    "url": url,
+                    "status": 0,
+                    "error": f"Batch processing error: {str(e)}",
+                    "title": "",
+                    "metaDescription": "",
+                    "textPreview": "",
+                    "fullText": "",
+                    "Summary": "",
+                    "IsQueryRelated": False,
+                    "relatedURLs": []
+                }
+                for url in valid_urls
+            ]
 
     async def summarize_text(self, text: str, query: str) -> Tuple[str, bool, List[str]]:
         """
@@ -355,12 +457,17 @@ class WebService:
             return "", False, []
         
         # Truncate the text if it exceeds the maximum allowed length.
-        max_text_length = int(os.getenv("MAX_TEXT_LENGTH_TO_SUMMARIZE", "5000"))
-        if len(text) > max_text_length:
-            text = text[:max_text_length]
+        if len(text) > MAX_TEXT_LENGTH_TO_SUMMARIZE:
+            text = text[:MAX_TEXT_LENGTH_TO_SUMMARIZE]
 
         # Respect Venice rate limits
-        await self.venice_rate_limiter.check()
+        try:
+            await self.venice_rate_limiter.check()
+        except Exception as e:
+            logger.warning(f"Venice rate limit exceeded: {str(e)}")
+            # Make a best effort determination for query relatedness
+            is_query_related = query.lower() in text.lower()
+            return "Rate limit exceeded, summary unavailable", is_query_related, []
 
         payload = {
             "model": config.venice_model,
@@ -392,12 +499,12 @@ class WebService:
             "Authorization": f"Bearer {config.venice_api_key}",
             "Content-Type": "application/json"
         }
-        max_attempts = 4
+        max_attempts = 3  # Reduced from 4 to 3
         delay = 1
         for attempt in range(max_attempts):
             try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(config.venice_url, json=payload, headers=headers, timeout=30.0)
+                async with httpx.AsyncClient(timeout=15.0) as client:  # Reduced timeout from 30s to 15s
+                    response = await client.post(config.venice_url, json=payload, headers=headers)
                 # If Venice returns 503 or 400, log details and retry if appropriate.
                 if response.status_code == 503:
                     reset_time = response.headers.get("x-ratelimit-reset-requests")
@@ -406,25 +513,34 @@ class WebService:
                     except Exception:
                         delay = delay
                     logger.warning("Venice API 503 Service Unavailable, retrying", extra={"attempt": attempt+1, "delay": delay})
-                    await asyncio.sleep(delay)
-                    delay *= 2
-                    continue
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(delay)
+                        delay *= 2
+                        continue
+                    else:
+                        # On last attempt, return default values instead of raising
+                        return "Service unavailable, summary not generated", query.lower() in text.lower(), []
                 elif response.status_code == 400:
                     logger.error("Venice API 400 Bad Request", extra={"response": response.text})
                     # Do not retry on 400 since it likely indicates a payload issue.
-                    break
+                    return "Bad request, summary not generated", query.lower() in text.lower(), []
+                
                 response.raise_for_status()
                 data = response.json()
                 summary = ""
                 is_query_related = False
                 related_urls = []
+                
                 if "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:
                     raw_content = data["choices"][0].get("message", {}).get("content", "")
+                    # Clean up the response
                     raw_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
+                    
                     # Remove markdown code block delimiters if present
                     if raw_content.startswith("```"):
                         raw_content = re.sub(r'^```(?:json)?\s*', '', raw_content)
                         raw_content = re.sub(r'\s*```$', '', raw_content)
+                    
                     try:
                         result_obj = json.loads(raw_content)
                         summary = result_obj.get("summary", "")
@@ -434,23 +550,30 @@ class WebService:
                             related_urls = []
                     except Exception as parse_exc:
                         logger.error("Failed to parse Venice API response as JSON", extra={"error": str(parse_exc), "raw_content": raw_content})
-                        summary = raw_content
-                        is_query_related = False
+                        summary = raw_content[:1000]  # Use raw content as fallback but limit length
+                        is_query_related = query.lower() in text.lower()  # Make best guess
                         related_urls = []
+                
                 return summary, is_query_related, related_urls
+            
             except httpx.HTTPStatusError as e:
-                if e.response.status_code == 503:
+                if e.response.status_code == 503 and attempt < max_attempts - 1:
                     logger.warning("Venice API HTTP 503 Service Unavailable, retrying", extra={"attempt": attempt+1})
                     await asyncio.sleep(delay)
                     delay *= 2
                     continue
                 else:
                     logger.error("Venice API HTTP error", extra={"error": str(e)})
-                    break
+                    # Return fallback values on error
+                    return "Error generating summary", query.lower() in text.lower(), []
+            
             except Exception as e:
                 logger.error("Error summarizing text", extra={"error": str(e)})
-                break
-        return "", False, []
+                # Return fallback values on any other error
+                return "Error generating summary", query.lower() in text.lower(), []
+        
+        # Final fallback if we exhaust retries
+        return "Unable to generate summary after multiple attempts", query.lower() in text.lower(), []
 
 class EmailService:
     def __init__(self):
