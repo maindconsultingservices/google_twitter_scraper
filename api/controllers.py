@@ -72,6 +72,61 @@ async def google_search_controller(query: str, max_results: int, timeframe: str 
         raise HTTPException(status_code=500, detail="Failed to perform google search.")
 
 #
+# GOOGLE SEARCH AND SCRAPE controller
+#
+async def google_search_and_scrape_controller(query: str, max_results: int, timeframe: str = None):
+    """
+    Controller to handle the combined Google search and web scrape request.
+    First performs a Google search, then scrapes the resulting URLs.
+    """
+    logger.info("Controller: google_search_and_scrape_controller called",
+                extra={"query": query, "max_results": max_results, "timeframe": timeframe})
+    
+    if config.enable_debug:
+        logger.debug("DEBUG INPUT google_search_and_scrape_controller", extra={
+            "query": query,
+            "max_results": max_results,
+            "timeframe": timeframe
+        })
+    
+    # Validation checks
+    if not query:
+        raise HTTPException(status_code=400, detail="Missing query parameter.")
+    if max_results < 1 or max_results > 100:  # Lower max than google_search to prevent timeout
+        raise HTTPException(status_code=400, detail="max_results must be between 1 and 100.")
+        
+    try:
+        # Step 1: Perform Google search
+        original_query, normalized_query = normalize_query(query)
+        
+        # First try with original query
+        search_results, effective_tf = await google_service.google_search(original_query, max_results, timeframe)
+        
+        # If no results, try with normalized query
+        if not search_results and original_query != normalized_query:
+            logger.info("No results with original query, trying normalized version", 
+                        extra={"original": original_query, "normalized": normalized_query})
+            search_results, effective_tf = await google_service.google_search(normalized_query, max_results, timeframe)
+        
+        if not search_results:
+            logger.info("No search results found for query", extra={"query": query})
+            return {"scraped": [], "timeframe": effective_tf}
+            
+        # Step 2: Scrape the URLs returned by the search
+        scraped_data = await web_service.scrape_urls(search_results, query)
+        
+        response_payload = {"scraped": scraped_data, "timeframe": effective_tf}
+        if config.enable_debug:
+            logger.debug("DEBUG OUTPUT google_search_and_scrape_controller", extra=response_payload)
+        
+        return response_payload
+    except Exception as e:
+        logger.error("Error in google_search_and_scrape_controller",
+                     exc_info=True,
+                     extra={"error": str(e)})
+        raise HTTPException(status_code=500, detail="Failed to perform search and scrape operation.")
+
+#
 # TWITTER controller
 #
 async def get_user_tweets(user_id: str, request: Request):
