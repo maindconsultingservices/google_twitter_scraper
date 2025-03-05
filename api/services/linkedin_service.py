@@ -30,8 +30,8 @@ class LinkedInService:
         self.scraper = None
         self.li_at_cookie = None
         
-        # Parse LinkedIn cookies from environment variable
-        self._parse_linkedin_cookies()
+        # Parse LinkedIn cookie from environment variable
+        self._parse_linkedin_cookie()
         
         # Initialize the scraper
         self.init_scraper()
@@ -39,39 +39,20 @@ class LinkedInService:
         # Storage for collected job data during scraping
         self.collected_jobs = []
         
-    def _parse_linkedin_cookies(self):
-        """Parse LinkedIn cookies from the environment variable"""
+    def _parse_linkedin_cookie(self):
+        """Parse LinkedIn li_at cookie from the environment variable"""
         try:
-            if config.linkedin_cookies_json:
-                logger.info("Loading LinkedIn cookies from environment variable")
+            if config.linkedin_cookies_li_at:
+                logger.info("Loading LinkedIn cookie from environment variable")
                 
-                # First try to parse as a JSON object
-                try:
-                    cookies_json = json.loads(config.linkedin_cookies_json)
-                    
-                    # If it's a proper cookie object with name and value
-                    if isinstance(cookies_json, list):
-                        for cookie in cookies_json:
-                            if cookie.get("name") == "li_at" and cookie.get("value"):
-                                self.li_at_cookie = cookie.get("value")
-                                break
-                    # If it's a dict with cookie names as keys
-                    elif isinstance(cookies_json, dict) and "li_at" in cookies_json:
-                        self.li_at_cookie = cookies_json["li_at"]
-                    # If it's just the li_at cookie value directly
-                    elif isinstance(cookies_json, str):
-                        self.li_at_cookie = cookies_json
-                except json.JSONDecodeError:
-                    # If not valid JSON, assume it's the cookie value directly
-                    self.li_at_cookie = config.linkedin_cookies_json
-                    
-                if not self.li_at_cookie:
-                    logger.warning("Could not find li_at cookie in LINKEDIN_COOKIES_JSON")
+                # Directly use the value as the li_at cookie
+                self.li_at_cookie = config.linkedin_cookies_li_at
+                logger.debug("Successfully loaded LinkedIn li_at cookie")
             else:
-                logger.warning("LINKEDIN_COOKIES_JSON environment variable not set")
+                logger.warning("LINKEDIN_COOKIES_LI_AT environment variable not set")
                 
         except Exception as e:
-            logger.error(f"Error parsing LinkedIn cookies: {str(e)}")
+            logger.error(f"Error parsing LinkedIn cookie: {str(e)}")
             self.li_at_cookie = None
         
     def init_scraper(self):
