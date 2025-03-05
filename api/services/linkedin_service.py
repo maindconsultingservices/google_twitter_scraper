@@ -1,11 +1,9 @@
-"""Service for finding job candidates on LinkedIn using real scraping."""
+"""Service for finding job candidates on LinkedIn."""
 import logging
 import asyncio
 import json
 import re
 import os
-import subprocess
-import sys
 from typing import List, Dict, Any, Optional, Tuple
 from fastapi.concurrency import run_in_threadpool
 from linkedin_jobs_scraper import LinkedinScraper
@@ -23,7 +21,7 @@ from .rate_limiter import RateLimiter
 class LinkedInService:
     """
     Service for finding candidates on LinkedIn based on job requirements.
-    Uses linkedin-jobs-scraper with @sparticuz/chromium for serverless environments.
+    Uses linkedin-jobs-scraper to search for jobs and extract candidate information.
     """
     def __init__(self):
         # Rate limiter to prevent excessive calls
@@ -55,54 +53,6 @@ class LinkedInService:
         except Exception as e:
             logger.error(f"Error parsing LinkedIn cookie: {str(e)}")
             self.li_at_cookie = None
-    
-    def _setup_chromium_environment(self):
-        """Set up the environment for @sparticuz/chromium"""
-        logger.info("Setting up @sparticuz/chromium environment")
-        
-        try:
-            # Set environment variables needed by @sparticuz/chromium
-            # These help minimize issues when running in serverless environments
-            os.environ["PUPPETEER_SKIP_CHROMIUM_DOWNLOAD"] = "true"
-            os.environ["PUPPETEER_EXECUTABLE_PATH"] = "/tmp/chromium"
-            
-            # Increase the /tmp directory size on Lambda to ensure enough space for Chromium
-            os.environ["PYTHONPATH"] = "/tmp"
-            
-            # Make Chrome executable directory if it doesn't exist
-            if not os.path.exists("/tmp/chromium"):
-                os.makedirs("/tmp/chromium", exist_ok=True)
-            
-            # Create nodejs script to get chrome executable path from @sparticuz/chromium
-            chrome_script = """
-            const chromium = require('@sparticuz/chromium');
-            (async () => {
-                console.log(await chromium.executablePath());
-            })();
-            """
-            
-            # Write the script to a file
-            with open("/tmp/get_chrome_path.js", "w") as f:
-                f.write(chrome_script)
-            
-            # Run the script to get Chrome path
-            result = subprocess.run(
-                ["node", "/tmp/get_chrome_path.js"], 
-                capture_output=True, 
-                text=True, 
-                check=True
-            )
-            
-            # Get the executable path
-            chrome_path = result.stdout.strip()
-            logger.info(f"Chrome executable path: {chrome_path}")
-            
-            # Return the path to the Chrome executable
-            return chrome_path
-            
-        except Exception as e:
-            logger.error(f"Error setting up Chromium: {str(e)}", exc_info=True)
-            return None
         
     def init_scraper(self):
         """Initialize the LinkedIn scraper with authenticated session"""
@@ -116,20 +66,10 @@ class LinkedInService:
             else:
                 logger.warning("No li_at cookie available. LinkedIn scraper may fail. Make sure LINKEDIN_COOKIES_LI_AT is set.")
             
-            # Get path to Chrome binary from @sparticuz/chromium
-            chrome_path = self._setup_chromium_environment()
-            
-            if not chrome_path:
-                logger.error("Failed to get Chrome executable path")
-                self.scraper = None
-                return
-                
-            logger.info(f"Using Chrome binary at: {chrome_path}")
-            
-            # Configure the scraper with @sparticuz/chromium
+            # Configure the scraper with higher slow_mo value for authenticated sessions
             self.scraper = LinkedinScraper(
-                chrome_executable_path=None,  # Let the scraper find chromedriver
-                chrome_binary_location=chrome_path,  # Path to our @sparticuz/chromium binary
+                chrome_executable_path=None,
+                chrome_binary_location=None,
                 chrome_options=None,
                 headless=True,
                 max_workers=1,  # Single worker to avoid rate limiting
@@ -266,7 +206,7 @@ class LinkedInService:
         
         # Check if scraper was initialized successfully
         if not self.scraper:
-            error_msg = "LinkedIn scraper not initialized. Please check if LINKEDIN_COOKIES_LI_AT is set correctly and ensure @sparticuz/chromium is properly configured."
+            error_msg = "LinkedIn scraper not initialized. Please check if LINKEDIN_COOKIES_LI_AT is set correctly."
             logger.error(error_msg)
             return {
                 "error": "LinkedIn search failed",
@@ -340,14 +280,11 @@ class LinkedInService:
         
         try:
             # Run the scraper in a thread pool to not block the async loop
-            logger.info(f"Running LinkedIn scraper with query: {query_text}")
             await run_in_threadpool(lambda: self.scraper.run([query]))
             
             # Process collected jobs to extract candidate information
             candidates = []
             total_found = len(self.collected_jobs)
-            
-            logger.info(f"LinkedIn scraper found {total_found} jobs")
             
             # Filter jobs based on excluded companies
             filtered_jobs = [
@@ -392,7 +329,7 @@ class LinkedInService:
             }
             
         except Exception as e:
-            logger.error(f"Error in LinkedIn search: {str(e)}", exc_info=True)
+            logger.error("Error in LinkedIn search", extra={"error": str(e)})
             return {
                 "error": "LinkedIn search failed",
                 "message": str(e),
