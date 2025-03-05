@@ -1,7 +1,9 @@
 """Service for finding job candidates on LinkedIn."""
 import logging
 import asyncio
+import json
 import re
+import os
 from typing import List, Dict, Any, Optional, Tuple
 from fastapi.concurrency import run_in_threadpool
 from linkedin_jobs_scraper import LinkedinScraper
@@ -26,21 +28,70 @@ class LinkedInService:
         # Rate limiter to prevent excessive calls
         self.rate_limiter = RateLimiter(5, 60_000)  # 5 requests per minute
         self.scraper = None
+        self.li_at_cookie = None
+        
+        # Parse LinkedIn cookies from environment variable
+        self._parse_linkedin_cookies()
+        
+        # Initialize the scraper
         self.init_scraper()
         
         # Storage for collected job data during scraping
         self.collected_jobs = []
         
-    def init_scraper(self):
-        """Initialize the LinkedIn scraper"""
+    def _parse_linkedin_cookies(self):
+        """Parse LinkedIn cookies from the environment variable"""
         try:
+            if config.linkedin_cookies_json:
+                logger.info("Loading LinkedIn cookies from environment variable")
+                
+                # First try to parse as a JSON object
+                try:
+                    cookies_json = json.loads(config.linkedin_cookies_json)
+                    
+                    # If it's a proper cookie object with name and value
+                    if isinstance(cookies_json, list):
+                        for cookie in cookies_json:
+                            if cookie.get("name") == "li_at" and cookie.get("value"):
+                                self.li_at_cookie = cookie.get("value")
+                                break
+                    # If it's a dict with cookie names as keys
+                    elif isinstance(cookies_json, dict) and "li_at" in cookies_json:
+                        self.li_at_cookie = cookies_json["li_at"]
+                    # If it's just the li_at cookie value directly
+                    elif isinstance(cookies_json, str):
+                        self.li_at_cookie = cookies_json
+                except json.JSONDecodeError:
+                    # If not valid JSON, assume it's the cookie value directly
+                    self.li_at_cookie = config.linkedin_cookies_json
+                    
+                if not self.li_at_cookie:
+                    logger.warning("Could not find li_at cookie in LINKEDIN_COOKIES_JSON")
+            else:
+                logger.warning("LINKEDIN_COOKIES_JSON environment variable not set")
+                
+        except Exception as e:
+            logger.error(f"Error parsing LinkedIn cookies: {str(e)}")
+            self.li_at_cookie = None
+        
+    def init_scraper(self):
+        """Initialize the LinkedIn scraper with authenticated session"""
+        try:
+            # Set the LI_AT_COOKIE environment variable for the scraper
+            if self.li_at_cookie:
+                logger.info("Setting LI_AT_COOKIE environment variable for LinkedIn scraper")
+                os.environ["LI_AT_COOKIE"] = self.li_at_cookie
+            else:
+                logger.warning("No li_at cookie available. LinkedIn scraper may fail")
+            
+            # Configure the scraper with higher slow_mo value for authenticated sessions
             self.scraper = LinkedinScraper(
                 chrome_executable_path=None,
                 chrome_binary_location=None,
                 chrome_options=None,
                 headless=True,
-                max_workers=1,
-                slow_mo=1.0,  # Slow down to avoid rate limiting
+                max_workers=1,  # Single worker to avoid rate limiting
+                slow_mo=1.3,    # Higher value (1.3+) for authenticated sessions as per docs
                 page_load_timeout=40
             )
             
@@ -73,7 +124,9 @@ class LinkedInService:
             "link": data.link,
             "apply_link": data.apply_link,
             "description": data.description,
-            "extracted_skills": skills
+            "extracted_skills": skills,
+            "date_text": data.date_text,
+            "insights": data.insights
         }
         
         self.collected_jobs.append(job_data)
@@ -125,6 +178,34 @@ class LinkedInService:
             return [ExperienceLevelFilters.MID_SENIOR]
         else:
             return [ExperienceLevelFilters.DIRECTOR]
+    
+    def _map_industry(self, industry: Optional[str]) -> List[IndustryFilters]:
+        """Map industry string to LinkedIn industry filters"""
+        if not industry:
+            return []
+            
+        industry_map = {
+            "technology": [IndustryFilters.TECHNOLOGY_INTERNET, IndustryFilters.IT_SERVICES, IndustryFilters.SOFTWARE_DEVELOPMENT],
+            "finance": [IndustryFilters.FINANCIAL_SERVICES, IndustryFilters.BANKING, IndustryFilters.INVESTMENT_BANKING, IndustryFilters.INVESTMENT_MANAGEMENT],
+            "aviation": [IndustryFilters.AIRLINES_AVIATION],
+            "engineering": [IndustryFilters.CIVIL_ENGINEERING, IndustryFilters.ELECTRONIC_MANUFACTURING],
+            "legal": [IndustryFilters.LEGAL_SERVICES],
+            "automotive": [IndustryFilters.MOTOR_VEHICLES],
+            "energy": [IndustryFilters.OIL_GAS],
+            "recruiting": [IndustryFilters.STAFFING_RECRUITING],
+            "environmental": [IndustryFilters.ENVIRONMENTAL_SERVICES],
+            "gaming": [IndustryFilters.COMPUTER_GAMES],
+            "information": [IndustryFilters.INFORMATION_SERVICES]
+        }
+        
+        # Look for matches in the industry map
+        industry_lower = industry.lower()
+        for key, filters in industry_map.items():
+            if key in industry_lower:
+                return filters
+                
+        # Default to empty list if no match found
+        return []
     
     @cache_result(ttl=1800)  # Cache for 30 minutes
     async def find_candidates(self, search_params: Dict[str, Any]) -> Dict[str, Any]:
@@ -180,13 +261,21 @@ class LinkedInService:
             if location.get("city"):
                 locations.append(location["city"])
         
+        # Map industry string to LinkedIn industry filters
+        industry_filters = self._map_industry(industry)
+        
         # Set up query filters
         filters = QueryFilters(
             relevance=RelevanceFilters.RECENT,
             time=TimeFilters.MONTH,
             type=[TypeFilters.FULL_TIME],
-            experience=self._map_experience_level(experience_years_min)
+            experience=self._map_experience_level(experience_years_min),
+            industry=industry_filters if industry_filters else None
         )
+        
+        # Handle remote work preference if specified
+        if location and location.get("remote", False):
+            filters.on_site_or_remote = [OnSiteOrRemoteFilters.REMOTE]
         
         # If we have skills, add them to the query string
         query_text = job_title
@@ -215,7 +304,7 @@ class LinkedInService:
             candidates = []
             total_found = len(self.collected_jobs)
             
-            # Filter jobs based on excluded companies and extract candidate info
+            # Filter jobs based on excluded companies
             filtered_jobs = [
                 job for job in self.collected_jobs
                 if not any(ex_company.lower() in job["company"].lower() for ex_company in excluded_companies)
