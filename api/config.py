@@ -6,8 +6,9 @@ load_dotenv()
 
 class Config:
     x_api_key = os.getenv("X_API_KEY", "")
-    x_api_key_2 = os.getenv("X_API_KEY_2", "")  # Add second API key
+    x_api_key_2 = os.getenv("X_API_KEY_2", "")
     twitter_cookies_json = os.getenv("TWITTER_COOKIES_JSON", "")
+    linkedin_cookies_json = os.getenv("LINKEDIN_COOKIES_JSON", "")
     enable_debug = (os.getenv("ENABLE_DEBUG", "false").lower() == "true")
     venice_api_key = os.getenv("VENICE_API_KEY", "")
     venice_model = os.getenv("VENICE_MODEL", "")
