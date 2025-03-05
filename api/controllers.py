@@ -7,6 +7,7 @@ load_dotenv()
 from fastapi import Request, HTTPException
 from typing import List, Tuple
 from .services import google_service, twitter_service, web_service
+from .services.linkedin_service import linkedin_service
 from .utils import logger
 from .types import SearchMode
 from .config import config
@@ -27,6 +28,61 @@ def normalize_query(query: str) -> Tuple[str, str]:
     )
     
     return original, normalized
+
+#
+# LINKEDIN controller
+#
+async def find_candidates_controller(body: dict):
+    """
+    Controller to handle LinkedIn candidate search requests.
+    """
+    logger.info("Controller: find_candidates_controller called", extra={"body": body})
+    
+    if config.enable_debug:
+        logger.debug("DEBUG INPUT find_candidates_controller", extra=body)
+    
+    # Validate required parameters
+    if not body.get("job_title"):
+        raise HTTPException(status_code=400, detail="Missing job_title parameter.")
+    
+    # Validate limit
+    limit = body.get("limit", 10)
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100.")
+    
+    try:
+        # Call the LinkedIn service to search for candidates
+        result = await linkedin_service.find_candidates(body)
+        
+        # Check if there was an error
+        if "error" in result:
+            logger.error(
+                f"LinkedIn candidate search failed: {result['error']} - {result['message']}"
+            )
+            raise HTTPException(status_code=500, detail=result["message"])
+        
+        if config.enable_debug:
+            logger.debug("DEBUG OUTPUT find_candidates_controller", extra=result)
+        
+        logger.info(
+            "LinkedIn candidate search completed",
+            extra={
+                "total_found": result["total_found"],
+                "candidates_returned": len(result["candidates"])
+            }
+        )
+        
+        return result
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error("Error in find_candidates_controller",
+                     exc_info=True,
+                     extra={"error": str(e)})
+        raise HTTPException(status_code=500, detail="Failed to search for candidates.")
+
 
 #
 # GOOGLE controller
