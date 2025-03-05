@@ -1,8 +1,8 @@
-# FastAPI Twitter, Google Search, and Web Scraper API
+# FastAPI Twitter, Google Search, Web Scraper, and LinkedIn API
 
 ## Overview
 
-This project is a FastAPI application that exposes several API endpoints to interact with Twitter (retrieving tweets, posting tweets, etc.), perform Google searches, scrape web pages, and send emails via Sendgrid. It includes rate limiting for external service calls and an API key based authentication middleware. Additionally, the application integrates with Redis to support distributed rate limiting and caching, making it more scalable for higher request volumes.
+This project is a FastAPI application that exposes several API endpoints to interact with Twitter (retrieving tweets, posting tweets, etc.), perform Google searches, scrape web pages, send emails via Sendgrid, and search for job candidates on LinkedIn. It includes rate limiting for external service calls and an API key based authentication middleware. Additionally, the application integrates with Redis to support distributed rate limiting and caching, making it more scalable for higher request volumes.
 
 ## Region
 
@@ -15,6 +15,7 @@ The application is configured using environment variables (via a `.env` file). K
 - **X_API_KEY**: API key required in request headers.
 - **X_API_KEY_2**: Alternative API key that works identically to X_API_KEY. Either key can be used for authentication.
 - **TWITTER_COOKIES_JSON**: Twitter cookies in JSON format for authentication.
+- **LINKEDIN_COOKIES_JSON**: LinkedIn "li_at" cookie value for authenticated session. See the "LinkedIn Authentication" section below for instructions on how to get this value.
 - **ENABLE_DEBUG**: Enable debug logging.
 - **VENICE_API_KEY**, **VENICE_MODEL**, **VENICE_URL**, **VENICE_TEMPERATURE**: Configuration for the Venice.ai API used to summarize text.
 - **SENDGRID_API_KEY**: API key for Sendgrid.
@@ -33,6 +34,7 @@ Instead of relying solely on an in-memory rate limiter, the application uses Red
 The application caches results for both Google searches and web scraping in Redis for 60 seconds.
 - **Google Search Caching:** Frequently requested search queries are cached to reduce the load on the synchronous `googlesearch` library and to deliver faster responses.
 - **Web Scraping Caching:** The scraped results for a given URL are cached so that subsequent requests within the caching period return the cached result, reducing redundant external HTTP requests.
+- **LinkedIn Candidate Search Caching:** Results from LinkedIn candidate searches are cached for 30 minutes to reduce the number of browser automations and improve response times.
 
 If any Redis operation fails (e.g., due to connection issues or a closed TCP transport), the system logs the error and gracefully falls back to the in-memory alternative to ensure continuous operation.
 
@@ -177,6 +179,97 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
 ```
 - **Redis Integration:** Scraped results are cached in Redis for 60 seconds.
 
+### LinkedIn Endpoints
+
+#### `POST /linkedin/find-candidates`
+- **Description:** Searches for job candidates on LinkedIn based on job requirements. The endpoint uses the LinkedIn Jobs Scraper to search for relevant job postings and extracts candidate information.
+- **Request Body:** A JSON object with the following properties:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `job_title` | string | Yes | The title of the position you're hiring for. This is used to match candidates with similar current or past role titles. For example: "Software Engineer", "Product Manager", "Data Scientist". More specific titles yield better results (e.g., "Senior Frontend Developer" vs. "Developer"). |
+| `skills` | array of strings | No | A list of specific skills required for the position. Each skill is matched against candidates' listed skills or extracted from their profile summaries. For technical roles, include both technical skills (e.g., "Python", "React") and soft skills if relevant (e.g., "Agile", "Team Leadership"). |
+| `location` | object | No | Geographic preferences for candidate location. |
+| `location.country` | string | No | The country for location filtering (e.g., "United States", "Germany"). |
+| `location.region` | string | No | The state, province, or region name (e.g., "California", "Ontario"). |
+| `location.city` | string | No | The city name (e.g., "San Francisco", "Toronto"). |
+| `education` | object | No | Educational requirements for candidates. |
+| `education.degree` | string | No | The type of degree required (e.g., "Bachelor", "Master", "PhD"). |
+| `education.field_of_study` | string | No | The field or major of study (e.g., "Computer Science", "Business Administration"). |
+| `education.school` | string | No | Specific school or university name (e.g., "Stanford University"). |
+| `experience_years_min` | integer | No | The minimum years of professional experience required. Value should be a positive integer. |
+| `industry` | string | No | Target industry to filter candidates (e.g., "Technology", "Healthcare", "Finance"). |
+| `company_size` | string | No | Target company size candidates have experience working in. Values typically follow LinkedIn's company size classifications: "1-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000", "5001-10000", "10001+". |
+| `limit` | integer | No | Maximum number of candidates to return in the response. Default is 10, maximum allowed is 100. |
+| `excluded_companies` | array of strings | No | List of company names to exclude from results. Candidates currently working at these companies will be filtered out. |
+| `excluded_profiles` | array of strings | No | List of LinkedIn profile URLs to exclude from results. |
+
+- **Request Body Example:**
+
+```json
+{
+  "job_title": "Software Engineer",
+  "skills": ["python", "machine learning", "api development"],
+  "location": {
+    "country": "United States",
+    "region": "California"
+  },
+  "education": {
+    "degree": "Bachelor",
+    "field_of_study": "Computer Science"
+  },
+  "experience_years_min": 2,
+  "industry": "Technology",
+  "company_size": "51-200",
+  "limit": 10,
+  "excluded_companies": ["Google", "Microsoft"],
+  "excluded_profiles": ["linkedin.com/in/profile1", "linkedin.com/in/profile2"]
+}
+```
+
+- **Response:** A JSON object containing matched candidates, sorted by relevance score:
+
+```json
+{
+  "candidates": [
+    {
+      "name": "Candidate at ABC Corp",
+      "profile_url": "https://linkedin.com/jobs/view/job-id",
+      "current_position": "Senior Software Engineer at ABC Corp",
+      "location": "San Francisco, CA",
+      "skills": ["Python", "Machine Learning", "API Development"],
+      "experience": [
+        {
+          "title": "Senior Software Engineer",
+          "company": "ABC Corp",
+          "duration": "Current"
+        }
+      ],
+      "education": [],
+      "relevance_score": 0.92
+    }
+  ],
+  "total_found": 45,
+  "limit": 10,
+  "credits_used": 0,
+  "cache_hits": 0
+}
+```
+
+- **Response Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `candidates` | Array of candidate profiles matching your search criteria |
+| `total_found` | Total number of candidates that match your criteria |
+| `limit` | The number of candidates returned (as specified in your request) |
+| `credits_used` | Always 0 for this implementation (unlike the ProxyCurl API) |
+| `cache_hits` | Number of cached results used (only applicable when using Redis) |
+
+- **Redis Integration:** Search results are cached in Redis for 30 minutes to reduce the number of browser automations and improve response times.
+
+- **Note on Implementation:** The LinkedIn endpoint mimics the ProxyCurl API interface but uses direct web scraping instead of a paid API. This means the data quality may be different, and certain fields (like education details) may not be available.
+
 ### Email Endpoints
 
 #### `POST /email/send`
@@ -200,13 +293,34 @@ This endpoint combines the functionality of the `/google/search` and `/web/scrap
 ### Web Scraping (`/web/scrape`)
 The scraping logic now executes individual URL scrapes concurrently using asyncio.gather and limits concurrent requests via a semaphore. In addition, scraped results are cached in Redis for 60 seconds to reduce redundant requests and speed up responses.
 
+### LinkedIn Candidate Search (`/linkedin/find-candidates`)
+The LinkedIn candidate search endpoint uses the linkedin-jobs-scraper library to search for job postings and extract candidate information. It runs the scraper in a thread pool to avoid blocking the async event loop and includes caching to improve performance. The response format is designed to be compatible with the ProxyCurl API, making it easy to switch between implementations.
+
 ## Rate Limits and Blacklisting
 - **Google Search:** The in-memory (or distributed, if Redis is configured) rate limiter allows up to 10 searches per minute.
 - **Web Scraping:** The rate limiter permits up to 5 scrape requests per minute.
+- **LinkedIn Scraping:** The rate limiter permits up to 5 requests per minute to avoid detection and rate limiting by LinkedIn.
 
-**Note:** These limits are enforced within the application. External services (Google or target websites) may impose stricter rate limits or block repeated requests if the thresholds are exceeded.
+**Note:** These limits are enforced within the application. External services (Google, LinkedIn, or target websites) may impose stricter rate limits or block repeated requests if the thresholds are exceeded.
 
 ## Conclusion
-This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses. The new `/google/search_and_scrape` endpoint simplifies client implementations by combining search and scrape operations into a single request.
+This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, searching for job candidates on LinkedIn, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
+
+## LinkedIn Authentication
+
+The LinkedIn job scraping functionality requires an authenticated LinkedIn session. To set this up:
+
+1. **Login to LinkedIn** in your Chrome browser using an account of your choice.
+2. Open Chrome DevTools by pressing F12 or right-clicking anywhere on the page and selecting "Inspect".
+3. Go to the "Application" tab in DevTools.
+4. In the left panel, expand "Storage" → "Cookies", then click on "https://www.linkedin.com".
+5. In the cookies list, find the row with the name "li_at".
+6. Copy the entire value from the "Value" column for the "li_at" cookie.
+7. Set the environment variable LINKEDIN_COOKIES_JSON with the value you copied:
+   ```
+   LINKEDIN_COOKIES_JSON=your_li_at_cookie_value_here
+   ```
+
+Note that LinkedIn cookies may expire after some time, so you may need to repeat this process periodically if you encounter authentication errors.
 
 ---
