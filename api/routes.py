@@ -18,7 +18,6 @@ from .controllers import (
     like_tweet,
     scrape_urls_controller
 )
-from .controllers import find_candidates_controller
 from typing import Optional
 from .services import email_service
 from .types import EmailPayload
@@ -176,40 +175,3 @@ async def send_email(payload: EmailPayload, _=Depends(require_api_key)):
     except Exception as e:
         logger.error("Error in send_email endpoint", exc_info=True, extra={"error": str(e)})
         raise HTTPException(status_code=500, detail="Failed to send email")
-
-
-linkedin_router = APIRouter()
-
-class LocationModel(BaseModel):
-    country: Optional[str] = None
-    region: Optional[str] = None
-    city: Optional[str] = None
-
-class EducationModel(BaseModel):
-    degree: Optional[str] = None
-    field_of_study: Optional[str] = None
-    school: Optional[str] = None
-
-class CandidateSearchRequest(BaseModel):
-    job_title: str
-    skills: Optional[List[str]] = None
-    location: Optional[LocationModel] = None
-    education: Optional[EducationModel] = None
-    experience_years_min: Optional[int] = None
-    industry: Optional[str] = None
-    company_size: Optional[str] = None
-    limit: Optional[int] = 10
-    excluded_companies: Optional[List[str]] = None
-    excluded_profiles: Optional[List[str]] = None
-
-@linkedin_router.post("/find-candidates")
-async def find_candidates_route(
-    body: CandidateSearchRequest,
-    _=Depends(require_api_key)
-):
-    """
-    Search for candidates on LinkedIn based on job requirements.
-    Returns candidate profiles matching the search criteria.
-    """
-    logger.debug("Route POST /linkedin/find-candidates called")
-    return await find_candidates_controller(body.dict(exclude_none=True))
