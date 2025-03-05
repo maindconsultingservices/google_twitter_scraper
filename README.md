@@ -182,7 +182,7 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
 ### LinkedIn Endpoints
 
 #### `POST /linkedin/find-candidates`
-- **Description:** Searches for job candidates on LinkedIn based on job requirements. This endpoint uses real LinkedIn data scraping with @sparticuz/chromium.
+- **Description:** Searches for job candidates on LinkedIn based on job requirements. The endpoint uses the LinkedIn Jobs Scraper to search for relevant job postings and extracts candidate information.
 - **Request Body:** A JSON object with the following properties:
 
 | Parameter | Type | Required | Description |
@@ -303,14 +303,9 @@ The LinkedIn candidate search endpoint uses the linkedin-jobs-scraper library to
 
 **Note:** These limits are enforced within the application. External services (Google, LinkedIn, or target websites) may impose stricter rate limits or block repeated requests if the thresholds are exceeded.
 
-## Conclusion
-This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, searching for job candidates on LinkedIn, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses. The new `/linkedin/find-candidates` endpoint provides a cost-effective alternative to paid APIs for finding job candidates.
-
 ## LinkedIn Authentication
 
-The LinkedIn API endpoint uses real scraping with @sparticuz/chromium in Vercel's serverless environment. This allows for actual LinkedIn data collection without simulated responses.
-
-To set up LinkedIn scraping:
+The LinkedIn job scraping functionality requires an authenticated LinkedIn session. To set this up:
 
 1. **Login to LinkedIn** in your Chrome browser using an account of your choice.
 2. Open Chrome DevTools by pressing F12 or right-clicking anywhere on the page and selecting "Inspect".
@@ -325,17 +320,7 @@ To set up LinkedIn scraping:
 
 Note that LinkedIn cookies may expire after some time, so you may need to repeat this process periodically if you encounter authentication errors.
 
-## Chromium in Serverless Environment
-
-This project uses @sparticuz/chromium to enable browser automation in the Vercel serverless environment. This is necessary for LinkedIn scraping, which requires a real browser. To set this up:
-
-1. The package.json file includes the necessary Node.js dependencies (@sparticuz/chromium and puppeteer-core)
-2. When the LinkedIn service initializes, it extracts the Chromium binary to the /tmp directory
-3. The LinkedIn scraper is configured to use this Chrome binary for automation
-
-Memory and timeout considerations:
-- You should allocate at least 1024 MB of RAM to your Vercel function (more is better)
-- You might need to increase the function timeout beyond the default 60 seconds
-- The first cold start will be slower as it needs to extract the Chromium binary
+## Conclusion
+This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, searching for job candidates on LinkedIn, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
 
 ---
