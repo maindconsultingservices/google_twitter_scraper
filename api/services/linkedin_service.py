@@ -57,12 +57,14 @@ class LinkedInService:
     def init_scraper(self):
         """Initialize the LinkedIn scraper with authenticated session"""
         try:
+            logger.info("Initializing LinkedIn scraper...")
+            
             # Set the LI_AT_COOKIE environment variable for the scraper
             if self.li_at_cookie:
                 logger.info("Setting LI_AT_COOKIE environment variable for LinkedIn scraper")
                 os.environ["LI_AT_COOKIE"] = self.li_at_cookie
             else:
-                logger.warning("No li_at cookie available. LinkedIn scraper may fail")
+                logger.warning("No li_at cookie available. LinkedIn scraper may fail. Make sure LINKEDIN_COOKIES_LI_AT is set.")
             
             # Configure the scraper with higher slow_mo value for authenticated sessions
             self.scraper = LinkedinScraper(
@@ -82,7 +84,7 @@ class LinkedInService:
             
             logger.info("LinkedIn scraper initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize LinkedIn scraper: {str(e)}")
+            logger.error(f"Failed to initialize LinkedIn scraper: {str(e)}", exc_info=True)
             # Set to None so we can check if initialization failed
             self.scraper = None
     
@@ -204,10 +206,11 @@ class LinkedInService:
         
         # Check if scraper was initialized successfully
         if not self.scraper:
-            logger.error("LinkedIn scraper not initialized")
+            error_msg = "LinkedIn scraper not initialized. Please check if LINKEDIN_COOKIES_LI_AT is set correctly."
+            logger.error(error_msg)
             return {
                 "error": "LinkedIn search failed",
-                "message": "LinkedIn scraper not initialized",
+                "message": error_msg,
                 "candidates": [],
                 "total_found": 0,
                 "limit": search_params.get("limit", 10),
