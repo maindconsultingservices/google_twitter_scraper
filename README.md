@@ -15,7 +15,7 @@ The application is configured using environment variables (via a `.env` file). K
 - **X_API_KEY**: API key required in request headers.
 - **X_API_KEY_2**: Alternative API key that works identically to X_API_KEY. Either key can be used for authentication.
 - **TWITTER_COOKIES_JSON**: Twitter cookies in JSON format for authentication.
-- **LINKEDIN_COOKIES_JSON**: LinkedIn "li_at" cookie value for authenticated session. See the "LinkedIn Authentication" section below for instructions on how to get this value.
+- **LINKEDIN_COOKIES_LI_AT**: LinkedIn "li_at" cookie value for authenticated session. See the "LinkedIn Authentication" section below for instructions on how to get this value.
 - **ENABLE_DEBUG**: Enable debug logging.
 - **VENICE_API_KEY**, **VENICE_MODEL**, **VENICE_URL**, **VENICE_TEMPERATURE**: Configuration for the Venice.ai API used to summarize text.
 - **SENDGRID_API_KEY**: API key for Sendgrid.
@@ -303,9 +303,6 @@ The LinkedIn candidate search endpoint uses the linkedin-jobs-scraper library to
 
 **Note:** These limits are enforced within the application. External services (Google, LinkedIn, or target websites) may impose stricter rate limits or block repeated requests if the thresholds are exceeded.
 
-## Conclusion
-This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, searching for job candidates on LinkedIn, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
-
 ## LinkedIn Authentication
 
 The LinkedIn job scraping functionality requires an authenticated LinkedIn session. To set this up:
@@ -316,11 +313,14 @@ The LinkedIn job scraping functionality requires an authenticated LinkedIn sessi
 4. In the left panel, expand "Storage" → "Cookies", then click on "https://www.linkedin.com".
 5. In the cookies list, find the row with the name "li_at".
 6. Copy the entire value from the "Value" column for the "li_at" cookie.
-7. Set the environment variable LINKEDIN_COOKIES_JSON with the value you copied:
+7. Set the environment variable LINKEDIN_COOKIES_LI_AT with the value you copied:
    ```
-   LINKEDIN_COOKIES_JSON=your_li_at_cookie_value_here
+   LINKEDIN_COOKIES_LI_AT=your_li_at_cookie_value_here
    ```
 
 Note that LinkedIn cookies may expire after some time, so you may need to repeat this process periodically if you encounter authentication errors.
+
+## Conclusion
+This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, searching for job candidates on LinkedIn, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
 
 ---
