@@ -11,3 +11,4 @@ httptools==0.6.4
 cloudscraper==1.2.71
 redis==5.2.1
 sendgrid
+linkedin-jobs-scraper==5.0.1
