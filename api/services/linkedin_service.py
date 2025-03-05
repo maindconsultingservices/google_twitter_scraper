@@ -17,7 +17,6 @@ from linkedin_jobs_scraper.filters import (
 from ..config import config
 from ..utils import logger
 from .rate_limiter import RateLimiter
-from .cache_service import cache_result
 
 class LinkedInService:
     """
@@ -188,7 +187,6 @@ class LinkedInService:
         # Default to empty list if no match found
         return []
     
-    @cache_result(ttl=1800)  # Cache for 30 minutes
     async def find_candidates(self, search_params: Dict[str, Any]) -> Dict[str, Any]:
         """
         Search for candidates on LinkedIn based on job requirements.
