@@ -3,7 +3,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from .routes import twitter_router, google_router, web_router, email_router
+from .routes import twitter_router, google_router, web_router, email_router, linkedin_router
 from .utils import logger
 
 logger.info("Starting the application entry point...")
@@ -54,3 +54,4 @@ app.include_router(twitter_router, prefix="/twitter", tags=["twitter"])
 app.include_router(google_router, prefix="/google", tags=["google"])
 app.include_router(web_router, prefix="/web", tags=["web"])
 app.include_router(email_router, prefix="/email", tags=["email"])
+app.include_router(linkedin_router, prefix="/linkedin", tags=["linkedin"])
