@@ -8,7 +8,7 @@ class Config:
     x_api_key = os.getenv("X_API_KEY", "")
     x_api_key_2 = os.getenv("X_API_KEY_2", "")
     twitter_cookies_json = os.getenv("TWITTER_COOKIES_JSON", "")
-    linkedin_cookies_json = os.getenv("LINKEDIN_COOKIES_JSON", "")
+    linkedin_cookies_li_at = os.getenv("LINKEDIN_COOKIES_LI_AT", "")
     enable_debug = (os.getenv("ENABLE_DEBUG", "false").lower() == "true")
     venice_api_key = os.getenv("VENICE_API_KEY", "")
     venice_model = os.getenv("VENICE_MODEL", "")
