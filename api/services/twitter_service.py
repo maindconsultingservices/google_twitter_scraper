@@ -1,9 +1,9 @@
-# api/services/twitter_service.py
 import time
 import json
 import traceback
 import asyncio
 from typing import List, Dict, Any, Optional
+import os
 
 from fastapi.concurrency import run_in_threadpool
 
@@ -22,14 +22,9 @@ class TwitterClientManager:
         self._scraper = None
         self._search = None
         self._logged_in = False
-        # We'll store the cookies dict here if we successfully parse them
         self._cookies_store = None
 
     def _init_account(self) -> Account:
-        """
-        Initialize the Account object using cookies (recommended)
-        or fallback to username/password if no cookies are provided.
-        """
         logger.debug("Entering _init_account to set up Account instance...")
         try:
             if config.twitter_cookies_json:
@@ -70,9 +65,6 @@ class TwitterClientManager:
         return acct
 
     def get_account(self) -> Account:
-        """
-        Returns the cached Account instance (or initializes it if needed).
-        """
         if not self._account:
             logger.debug("No existing Account found; calling _init_account now.")
             self._account = self._init_account()
@@ -82,13 +74,9 @@ class TwitterClientManager:
         return self._account
 
     def get_scraper(self) -> Scraper:
-        """
-        Returns a cached Scraper instance. If cookies were loaded, use them;
-        otherwise fallback to email/username/password.
-        """
         if not self._scraper:
             logger.debug("No existing Scraper; about to retrieve account/cookies for the Scraper.")
-            self.get_account()  # ensure the Account is initialized
+            self.get_account()
             if self._cookies_store:
                 logger.debug("Detected cookies store; creating Scraper with it now.")
                 try:
@@ -116,13 +104,13 @@ class TwitterClientManager:
         return self._scraper
 
     def get_search(self) -> Search:
-        """
-        Returns a cached Search instance, for advanced queries.
-        """
         if not self._search:
             logger.debug("No existing Search instance; creating a new one.")
             logger.info("Creating Search instance for advanced queries.")
-            self.get_account()  # ensure the Account is initialized
+            self.get_account()
+
+            output_dir = "/tmp/twitter_search"
+            os.makedirs(output_dir, exist_ok=True)
 
             console_only_logger = {
                 "version": 1,
@@ -138,8 +126,6 @@ class TwitterClientManager:
                     "level": "DEBUG"
                 }
             }
-
-            output_dir = "/tmp/twitter_search"
 
             if self._cookies_store:
                 logger.debug("Detected cookies store; creating Search with cookies.")
@@ -179,9 +165,6 @@ class TwitterClientManager:
         return self._search
 
     def is_logged_in(self) -> bool:
-        """
-        We consider ourselves logged in if a quick home_timeline call does not fail.
-        """
         logger.debug("Checking if we are logged in via home_timeline call.")
         if not self._logged_in:
             try:
@@ -201,10 +184,9 @@ twitter_client_manager = TwitterClientManager()
 
 class TwitterService:
     def __init__(self):
-        self.rate_limiter = RateLimiter(15, 60_000)  # e.g. 15 requests/min
+        self.rate_limiter = RateLimiter(15, 60_000)
 
     async def _ensure_login(self):
-        """Check that the account is logged in; raises an error if not."""
         logger.debug("_ensure_login called. Checking is_logged_in() on twitter_client_manager.")
         if not twitter_client_manager.is_logged_in():
             logger.debug("twitter_client_manager reports not logged in. Raising RuntimeError.")
@@ -212,17 +194,15 @@ class TwitterService:
         logger.debug("twitter_client_manager is logged in successfully.")
 
     def get_profile(self):
-        """Return minimal profile data from the account object, if needed."""
         return {"username": getattr(config, "twitter_username", "unknown"), "id": "0"}
 
-    # ================== READ methods =====================
     async def get_user_tweets(self, user_id: str, count: int) -> List[Tweet]:
         logger.debug("Service: get_user_tweets invoked", extra={"user_id": user_id, "count": count})
         await self.rate_limiter.check()
         await self._ensure_login()
 
         scraper = twitter_client_manager.get_scraper()
-        numeric_id = int(user_id)  # might fail if not numeric
+        numeric_id = int(user_id)
         raw_tweets = scraper.tweets([numeric_id], limit=count)
         return self._parse_tweets(raw_tweets)
 
@@ -334,7 +314,6 @@ class TwitterService:
         search_results = await self.fetch_search_tweets(f"@{username}", count, SearchMode.Latest.value)
         return search_results
 
-    # ================== WRITE methods =====================
     async def post_tweet(self, text: str, in_reply_to_id: str = None) -> Optional[str]:
         logger.debug("Service: post_tweet called", extra={"text": text, "inReplyToId": in_reply_to_id})
         await self.rate_limiter.check()
@@ -398,7 +377,6 @@ class TwitterService:
                          extra={"error": str(e)})
             return False
 
-    # ================== HELPER methods =====================
     def _parse_tweets(self, raw_items) -> List[Tweet]:
         logger.debug("_parse_tweets called.", extra={
             "raw_items_count": len(raw_items) if raw_items else 0
@@ -431,7 +409,6 @@ class TwitterService:
 
     def _map_tweet_item(self, data: dict) -> Optional[Tweet]:
         try:
-            # If "tweet_results" -> "result" is in data, unwrap once more
             if "tweet_results" in data and isinstance(data["tweet_results"], dict):
                 data = data["tweet_results"].get("result", data)
 
@@ -458,12 +435,10 @@ class TwitterService:
                 text = raw_text
                 conv_id = str(legacy.get("conversation_id_str") or "0")
 
-                # Stats
                 q_count = int(legacy.get("quote_count", 0))
                 r_count = int(legacy.get("reply_count", 0))
                 rt_count = int(legacy.get("retweet_count", 0))
 
-                # Attempt to get the user
                 core_user = data.get("core", {}).get("user_results", {}).get("result", {})
                 if isinstance(core_user, dict):
                     user_id_str = str(core_user.get("rest_id") or "0")
@@ -472,7 +447,6 @@ class TwitterService:
                 else:
                     uname = data.get("username") or data.get("user_screen_name") or "unknown"
             else:
-                # Fallback
                 raw_text = data.get("text", "")
                 if not raw_text and "note_tweet" in data:
                     raw_text = self._extract_note_tweet_text(data["note_tweet"])
@@ -527,12 +501,6 @@ class TwitterService:
         return ""
 
     def _flatten_search_results(self, results):
-        """
-        Takes raw 'results' from search_client.run() or timeline calls and attempts to
-        flatten them into a list of tweet-like dicts for _map_tweet_item.
-        """
-
-        # If the library returned a JSON string, parse it here
         if isinstance(results, str):
             logger.debug("_flatten_search_results received a string. Attempting to parse JSON.")
             try:
@@ -549,7 +517,6 @@ class TwitterService:
         flattened_tweets = []
 
         for idx, item in enumerate(results):
-            # 1) Possibly timeline entry with entryId = 'tweet-...'
             if (
                 isinstance(item, dict)
                 and isinstance(item.get("entryId"), str)
@@ -561,7 +528,6 @@ class TwitterService:
                     flattened_tweets.extend(single_extracts)
                     continue
 
-            # 2) Possibly older shapes with "tweets" => [...]
             if isinstance(item, dict) and "tweets" in item and isinstance(item["tweets"], list):
                 extracted_count = len(item["tweets"])
                 if config.enable_debug:
@@ -569,7 +535,6 @@ class TwitterService:
                 flattened_tweets.extend(item["tweets"])
                 continue
 
-            # 3) instructions-based or data->entries
             elif isinstance(item, dict) and ("entryId" in item or "entries" in item or "data" in item):
                 extracted = self._extract_from_new_instructions(item)
                 if config.enable_debug:
@@ -577,7 +542,6 @@ class TwitterService:
                 flattened_tweets.extend(extracted)
                 continue
 
-            # 4) Possibly nested arrays
             elif isinstance(item, list):
                 for sub in item:
                     if isinstance(sub, dict) and "tweets" in sub and isinstance(sub["tweets"], list):
@@ -599,14 +563,9 @@ class TwitterService:
         return flattened_tweets
 
     def _extract_from_new_instructions(self, data_item):
-        """
-        Attempt to parse instructions-based structures or single "entryId" structures.
-        For home timeline or search-based instructions.
-        """
         collected = []
 
         try:
-            # 1) data->home->home_timeline_urt->instructions
             if (
                 "data" in data_item
                 and isinstance(data_item["data"], dict)
@@ -621,7 +580,6 @@ class TwitterService:
                         if isinstance(inst, dict) and "entries" in inst:
                             collected.extend(self._collect_entries(inst["entries"]))
 
-            # 2) data->search_by_query->instructions
             elif "data" in data_item and isinstance(data_item["data"], dict):
                 search_obj = data_item["data"].get("search_by_query")
                 if search_obj and isinstance(search_obj, dict):
@@ -630,17 +588,14 @@ class TwitterService:
                         if isinstance(inst, dict) and "entries" in inst:
                             collected.extend(self._collect_entries(inst["entries"]))
 
-            # 3) if top-level has 'instructions'
             elif "instructions" in data_item and isinstance(data_item["instructions"], list):
                 for inst in data_item["instructions"]:
                     if isinstance(inst, dict) and "entries" in inst:
                         collected.extend(self._collect_entries(inst["entries"]))
 
-            # 4) if top-level has 'entries'
             elif "entries" in data_item and isinstance(data_item["entries"], list):
                 collected.extend(self._collect_entries(data_item["entries"]))
 
-            # 5) single "entryId" + "content" => parse as timeline entry
             elif "entryId" in data_item and "content" in data_item:
                 single_extracts = self._extract_from_entry(data_item)
                 if single_extracts:
@@ -664,15 +619,6 @@ class TwitterService:
         return found
 
     def _extract_from_entry(self, entry) -> List[dict]:
-        """
-        Attempt to get one or more tweet dicts from an entry shaped like:
-        {
-          "entryId": "tweet-...",
-          "content": {
-            "itemContent": { "tweet_results": { "result": {...} } }
-          }
-        }
-        """
         results = []
         try:
             content = entry.get("content")
@@ -698,7 +644,6 @@ class TwitterService:
                             results.append(tweet_data)
                             return results
 
-            # fallback: recursively search for any 'tweet_results' -> 'result'
             deeper = self._extract_tweets_deep(content)
             results.extend(deeper)
 
@@ -710,9 +655,6 @@ class TwitterService:
         return results
 
     def _extract_tweets_deep(self, node: Any) -> List[dict]:
-        """
-        A fallback to recursively search for any 'tweet_results' -> 'result' inside a dict/array.
-        """
         found = []
 
         if isinstance(node, dict):
@@ -720,7 +662,6 @@ class TwitterService:
                 maybe_tweet = node["tweet_results"].get("result")
                 if isinstance(maybe_tweet, dict):
                     found.append(maybe_tweet)
-            # Recurse child values
             for v in node.values():
                 found.extend(self._extract_tweets_deep(v))
 
@@ -730,5 +671,4 @@ class TwitterService:
 
         return found
 
-# Create the singleton instance
 twitter_service = TwitterService()
