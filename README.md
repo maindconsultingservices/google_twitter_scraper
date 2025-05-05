@@ -336,7 +336,7 @@ The Twitter endpoints require a valid `TWITTER_COOKIES_JSON` environment variabl
    }
    ```
 5. Minify or properly escape this JSON string for use in environment variables.
-6. Set **`TWITTER_COOKIES_JSON`** in your `.env` file to that JSON string. For example:
+6. Set **`TWITTER_COOKIES_JSON`** in your `.env` file to that JSON string (just one line, no blank spaces). For example:
 
    ```
    TWITTER_COOKIES_JSON={"auth_token":"ABC...","ct0":"DEF...","twid":"GHI...","guest_id":"JKL..."}
