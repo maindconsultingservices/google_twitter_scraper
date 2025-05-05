@@ -158,8 +158,10 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
   ],
   "query": "latest technology trends"
 }
-```
-- **Response:** A JSON object containing scraped data for each URL:
+````
+
+* **Response:** A JSON object containing scraped data for each URL:
+
 ```json
 {
   "scraped": [
@@ -177,34 +179,36 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
   ]
 }
 ```
-- **Redis Integration:** Scraped results are cached in Redis for 60 seconds.
+
+* **Redis Integration:** Scraped results are cached in Redis for 60 seconds.
 
 ### LinkedIn Endpoints
 
 #### `POST /linkedin/find-candidates`
-- **Description:** Searches for job candidates on LinkedIn based on job requirements. The endpoint uses the LinkedIn Jobs Scraper to search for relevant job postings and extracts candidate information.
-- **Request Body:** A JSON object with the following properties:
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `job_title` | string | Yes | The title of the position you're hiring for. This is used to match candidates with similar current or past role titles. For example: "Software Engineer", "Product Manager", "Data Scientist". More specific titles yield better results (e.g., "Senior Frontend Developer" vs. "Developer"). |
-| `skills` | array of strings | No | A list of specific skills required for the position. Each skill is matched against candidates' listed skills or extracted from their profile summaries. For technical roles, include both technical skills (e.g., "Python", "React") and soft skills if relevant (e.g., "Agile", "Team Leadership"). |
-| `location` | object | No | Geographic preferences for candidate location. |
-| `location.country` | string | No | The country for location filtering (e.g., "United States", "Germany"). |
-| `location.region` | string | No | The state, province, or region name (e.g., "California", "Ontario"). |
-| `location.city` | string | No | The city name (e.g., "San Francisco", "Toronto"). |
-| `education` | object | No | Educational requirements for candidates. |
-| `education.degree` | string | No | The type of degree required (e.g., "Bachelor", "Master", "PhD"). |
-| `education.field_of_study` | string | No | The field or major of study (e.g., "Computer Science", "Business Administration"). |
-| `education.school` | string | No | Specific school or university name (e.g., "Stanford University"). |
-| `experience_years_min` | integer | No | The minimum years of professional experience required. Value should be a positive integer. |
-| `industry` | string | No | Target industry to filter candidates (e.g., "Technology", "Healthcare", "Finance"). |
-| `company_size` | string | No | Target company size candidates have experience working in. Values typically follow LinkedIn's company size classifications: "1-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000", "5001-10000", "10001+". |
-| `limit` | integer | No | Maximum number of candidates to return in the response. Default is 10, maximum allowed is 100. |
-| `excluded_companies` | array of strings | No | List of company names to exclude from results. Candidates currently working at these companies will be filtered out. |
-| `excluded_profiles` | array of strings | No | List of LinkedIn profile URLs to exclude from results. |
+* **Description:** Searches for job candidates on LinkedIn based on job requirements. The endpoint uses the LinkedIn Jobs Scraper to search for relevant job postings and extracts candidate information.
+* **Request Body:** A JSON object with the following properties:
 
-- **Request Body Example:**
+| Parameter                  | Type             | Required | Description                                                                                                                                 |
+| -------------------------- | ---------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `job_title`                | string           | Yes      | The title of the position you're hiring for. More specific titles yield better results (e.g., "Senior Frontend Developer" vs. "Developer"). |
+| `skills`                   | array of strings | No       | A list of specific skills required for the position. Match against profiles or extracted summaries.                                         |
+| `location`                 | object           | No       | Geographic preferences.                                                                                                                     |
+| `location.country`         | string           | No       | Country for filtering (e.g., "United States", "Germany").                                                                                   |
+| `location.region`          | string           | No       | State, province, or region (e.g., "California", "Ontario").                                                                                 |
+| `location.city`            | string           | No       | City name (e.g., "San Francisco", "Toronto").                                                                                               |
+| `education`                | object           | No       | Educational requirements.                                                                                                                   |
+| `education.degree`         | string           | No       | Degree type (e.g., "Bachelor", "Master", "PhD").                                                                                            |
+| `education.field_of_study` | string           | No       | Field of study (e.g., "Computer Science", "Business Administration").                                                                       |
+| `education.school`         | string           | No       | Specific university or school name (e.g., "Stanford University").                                                                           |
+| `experience_years_min`     | integer          | No       | Minimum years of experience.                                                                                                                |
+| `industry`                 | string           | No       | Industry filter (e.g., "Technology", "Healthcare", "Finance").                                                                              |
+| `company_size`             | string           | No       | Company size classification (e.g., "1-10", "11-50", "51-200", etc.).                                                                        |
+| `limit`                    | integer          | No       | Max number of candidates to return (default 10, max 100).                                                                                   |
+| `excluded_companies`       | array of strings | No       | Company names to exclude.                                                                                                                   |
+| `excluded_profiles`        | array of strings | No       | LinkedIn profile URLs to exclude.                                                                                                           |
+
+* **Request Body Example:**
 
 ```json
 {
@@ -227,7 +231,7 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
 }
 ```
 
-- **Response:** A JSON object containing matched candidates, sorted by relevance score:
+* **Response:** A JSON object containing matched candidates, sorted by relevance score:
 
 ```json
 {
@@ -256,50 +260,42 @@ If any Redis operation fails (e.g., due to connection issues or a closed TCP tra
 }
 ```
 
-- **Response Fields:**
+* **Response Fields:**
 
-| Field | Description |
-|-------|-------------|
-| `candidates` | Array of candidate profiles matching your search criteria |
-| `total_found` | Total number of candidates that match your criteria |
-| `limit` | The number of candidates returned (as specified in your request) |
-| `credits_used` | Always 0 for this implementation (unlike the ProxyCurl API) |
-| `cache_hits` | Number of cached results used (only applicable when using Redis) |
+| Field          | Description                                                  |
+| -------------- | ------------------------------------------------------------ |
+| `candidates`   | Array of candidate profiles matching your search criteria    |
+| `total_found`  | Total number of candidates that match your criteria          |
+| `limit`        | Number of candidates returned (as specified in your request) |
+| `credits_used` | Always 0 (unlike paid ProxyCurl API)                         |
+| `cache_hits`   | Number of cached results used (only when using Redis)        |
 
-- **Redis Integration:** Search results are cached in Redis for 30 minutes to reduce the number of browser automations and improve response times.
-
-- **Note on Implementation:** The LinkedIn endpoint mimics the ProxyCurl API interface but uses direct web scraping instead of a paid API. This means the data quality may be different, and certain fields (like education details) may not be available.
-
-### Email Endpoints
-
-#### `POST /email/send`
-- **Description:** Sends an email using Sendgrid.
-- **Request Body:** JSON object with:
-  - `to_email` (string, required): The recipient's email address.
-  - `subject` (string, required): The email subject.
-  - `html_content` (string, required): The HTML content of the email.
-- **Response:** JSON object indicating success or failure.
-  - On success: `{"status": "success", "message": "Email sent successfully"}`
-  - On failure: `{"status": "error", "message": "Failed to send email: <status_code>"}` or HTTP 500 error if an internal error occurs.
+* **Redis Integration:** Search results are cached in Redis for 30 minutes to reduce browser automation and improve response times.
+* **Note on Implementation:** Uses direct web scraping instead of a paid API; some fields (e.g., education details) may not be available.
 
 ## Efficiency Improvements
 
 ### Google Search (`/google/search`)
-The endpoint leverages the synchronous googlesearch library and runs the search within a thread pool (using run_in_threadpool). This design is now enhanced with Redis caching, which stores frequent query results for 60 seconds. Additionally, a new query parameter (timeframe) enables time-based filtering of search results.
+
+The endpoint leverages the synchronous googlesearch library and runs the search within a thread pool (using run\_in\_threadpool). This design is now enhanced with Redis caching, which stores frequent query results for 60 seconds. Additionally, a new query parameter (timeframe) enables time-based filtering of search results.
 
 ### Google Search and Scrape (`/google/search_and_scrape`)
-This endpoint combines the functionality of the `/google/search` and `/web/scrape` endpoints, first performing a search and then automatically scraping all returned URLs. This reduces client-side complexity and network round-trips. The endpoint limits `max_results` to 100 to prevent timeouts on Vercel's 60-second execution limit (on free tier). It is recommended that max_result doesn't exceed 5 either to minimize the likelihood of hitting execution limit.
+
+This endpoint combines the functionality of the `/google/search` and `/web/scrape` endpoints, first performing a search and then automatically scraping all returned URLs. This reduces client-side complexity and network round-trips. The endpoint limits `max_results` to 100 to prevent timeouts on Vercel's 60-second execution limit (on free tier). It is recommended that `max_results` doesn't exceed 5 to minimize the likelihood of hitting execution limits.
 
 ### Web Scraping (`/web/scrape`)
+
 The scraping logic now executes individual URL scrapes concurrently using asyncio.gather and limits concurrent requests via a semaphore. In addition, scraped results are cached in Redis for 60 seconds to reduce redundant requests and speed up responses.
 
 ### LinkedIn Candidate Search (`/linkedin/find-candidates`)
+
 The LinkedIn candidate search endpoint uses the linkedin-jobs-scraper library to search for job postings and extract candidate information. It runs the scraper in a thread pool to avoid blocking the async event loop and includes caching to improve performance. The response format is designed to be compatible with the ProxyCurl API, making it easy to switch between implementations.
 
 ## Rate Limits and Blacklisting
-- **Google Search:** The in-memory (or distributed, if Redis is configured) rate limiter allows up to 10 searches per minute.
-- **Web Scraping:** The rate limiter permits up to 5 scrape requests per minute.
-- **LinkedIn Scraping:** The rate limiter permits up to 5 requests per minute to avoid detection and rate limiting by LinkedIn.
+
+* **Google Search:** The in-memory (or distributed, if Redis is configured) rate limiter allows up to 10 searches per minute.
+* **Web Scraping:** The rate limiter permits up to 5 scrape requests per minute.
+* **LinkedIn Scraping:** The rate limiter permits up to 5 requests per minute to avoid detection and rate limiting by LinkedIn.
 
 **Note:** These limits are enforced within the application. External services (Google, LinkedIn, or target websites) may impose stricter rate limits or block repeated requests if the thresholds are exceeded.
 
@@ -309,18 +305,45 @@ The LinkedIn job scraping functionality requires an authenticated LinkedIn sessi
 
 1. **Login to LinkedIn** in your Chrome browser using an account of your choice.
 2. Open Chrome DevTools by pressing F12 or right-clicking anywhere on the page and selecting "Inspect".
-3. Go to the "Application" tab in DevTools.
-4. In the left panel, expand "Storage" → "Cookies", then click on "https://www.linkedin.com".
-5. In the cookies list, find the row with the name "li_at".
-6. Copy the entire value from the "Value" column for the "li_at" cookie.
-7. Set the environment variable LINKEDIN_COOKIES_LI_AT with the value you copied:
+3. Go to the **Application** tab in DevTools.
+4. In the left panel, expand **Storage** → **Cookies**, then click on **[https://www.linkedin.com](https://www.linkedin.com)**.
+5. In the cookies list, find the row with the name **`li_at`**.
+6. Copy the entire value from the **Value** column for the **`li_at`** cookie.
+7. Set the environment variable **`LINKEDIN_COOKIES_LI_AT`** with the value you copied:
+
    ```
    LINKEDIN_COOKIES_LI_AT=your_li_at_cookie_value_here
    ```
 
 Note that LinkedIn cookies may expire after some time, so you may need to repeat this process periodically if you encounter authentication errors.
 
-## Conclusion
-This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, searching for job candidates on LinkedIn, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
+## Twitter/X Authentication
 
----
+The Twitter endpoints require a valid `TWITTER_COOKIES_JSON` environment variable, containing your Twitter session cookies in JSON format. To obtain and configure this:
+
+1. **Login to Twitter (X)** in your browser.
+2. Open DevTools (F12), go to the **Application** (or **Storage**) tab, and select **Cookies** → **[https://twitter.com](https://twitter.com)** (and `https://api.twitter.com`).
+3. Export all cookie name/value pairs for these domains. For each cookie, note its name and value.
+4. Construct a JSON object mapping cookie names to values, for example:
+
+   ```json
+   {
+     "auth_token": "ABC...",
+     "ct0": "DEF...",
+     "twid": "GHI...",
+     "guest_id": "JKL..."
+     // include all relevant cookies
+   }
+   ```
+5. Minify or properly escape this JSON string for use in environment variables.
+6. Set **`TWITTER_COOKIES_JSON`** in your `.env` file to that JSON string. For example:
+
+   ```
+   TWITTER_COOKIES_JSON={"auth_token":"ABC...","ct0":"DEF...","twid":"GHI...","guest_id":"JKL..."}
+   ```
+
+Ensure you include every cookie required by the Twitter client library to authenticate your session. If cookies expire or you receive login errors, repeat this process to refresh your `TWITTER_COOKIES_JSON`.
+
+## Conclusion
+
+This API provides a unified interface for interacting with Twitter, performing Google searches (with optional site restrictions and time-based filtering), scraping web pages, searching for job candidates on LinkedIn, and sending emails via Sendgrid efficiently. With Redis integration, the application supports distributed rate limiting and caching, making it more scalable and capable of handling higher volumes of requests while maintaining low-latency responses.
