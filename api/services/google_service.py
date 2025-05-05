@@ -56,6 +56,7 @@ class GoogleService:
         global _last_google_call
         min_interval = 1.0  # seconds between calls; adjust as needed
         key = "google:next_allowed"
+
         if self.rate_limiter_google.redis_client:
             client = self.rate_limiter_google.redis_client
             now = time.time()
@@ -72,23 +73,27 @@ class GoogleService:
                 return 0
             end
             """
-            wait_time = await client.eval(script, 1, key, now, min_interval)
-            wait_time = float(wait_time)
-            if wait_time > 0:
-                logger.debug("Distributed queue: waiting for %.2f seconds", wait_time)
-                await asyncio.sleep(wait_time)
-        else:
-            # Fallback to in-memory approach
             try:
-                last = _last_google_call
-            except NameError:
-                last = 0
-            now = time.time()
-            if now - last < min_interval:
-                wait_time = min_interval - (now - last)
-                logger.debug("In-memory queue: waiting for %.2f seconds", wait_time)
-                await asyncio.sleep(wait_time)
-            _last_google_call = time.time()
+                wait_time = await client.eval(script, 1, key, now, min_interval)
+                wait_time = float(wait_time)
+                if wait_time > 0:
+                    logger.debug("Distributed queue: waiting for %.2f seconds", wait_time)
+                    await asyncio.sleep(wait_time)
+                return
+            except Exception as e:
+                logger.warning("Distributed queue: Redis eval failed, falling back to in-memory", extra={"error": str(e)})
+
+        # Fallback to in-memory approach
+        try:
+            last = _last_google_call
+        except NameError:
+            last = 0
+        now = time.time()
+        if now - last < min_interval:
+            wait_time = min_interval - (now - last)
+            logger.debug("In-memory queue: waiting for %.2f seconds", wait_time)
+            await asyncio.sleep(wait_time)
+        _last_google_call = time.time()
 
     async def _search_with_retries(self, query: str, max_results: int) -> List[str]:
         max_attempts = 3
@@ -121,11 +126,11 @@ class GoogleService:
         logger.debug("GoogleService: google_search called", extra={"query": query, "max_results": max_results, "timeframe": timeframe})
         await self.rate_limiter_google.check()
         await self._acquire_google_search_slot()
-    
+
         # Get the list of blacklisted domains from environment variable
         blacklist_env = os.getenv("SEARCH_BLACKLISTED_DOMAINS", "")
         blacklisted_domains = [d.strip().lower() for d in blacklist_env.split(",") if d.strip()]
-    
+
         # Local helper to build query with timeframe
         def build_query(q: str, tf: Optional[str]) -> str:
             from datetime import datetime, timedelta
@@ -143,7 +148,7 @@ class GoogleService:
                 logger.warning("Invalid timeframe provided, ignoring timeframe filter", extra={"timeframe": tf})
                 return q
             return f"{q} after:{date.strftime('%Y-%m-%d')}"
-    
+
         if timeframe and timeframe.lower() == "week":
             # Updated fallback sequence: "week" -> "year" -> None
             fallback_timeframes = ["week", "year", None]
@@ -153,7 +158,7 @@ class GoogleService:
                 mod_query = build_query(query, tf) if tf is not None else query
                 try:
                     results = await self._search_with_retries(mod_query, max_results)
-                except Exception as e:
+                except Exception:
                     results = []
                 # Filter out invalid URLs, PDFs, and blacklisted domains
                 valid_results = [
