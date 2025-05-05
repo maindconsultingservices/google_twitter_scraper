@@ -138,6 +138,7 @@ class TwitterClientManager:
                         data_dir=output_dir,
                         cfg=console_only_logger
                     )
+                    logger.info("Search instance created from cookies store.")
                 except Exception as e:
                     tb = traceback.format_exc()
                     logger.error("Exception creating Search with stored cookies", extra={"error": str(e), "traceback": tb})
@@ -262,27 +263,27 @@ class TwitterService:
         })
 
         try:
-            results = await run_in_threadpool(
-                search_client.run,
-                queries=queries,
-                limit=max_tweets,
-                save=False,
-                debug=False,
-                output_dir="/tmp/twitter_search"
-            )
+            # Ensure writes happen in a writable directory
+            scratch_dir = "/tmp/twitter_search"
+            os.makedirs(scratch_dir, exist_ok=True)
+            previous_cwd = os.getcwd()
+            os.chdir(scratch_dir)
+            try:
+                results = await run_in_threadpool(
+                    search_client.run,
+                    queries=queries,
+                    limit=max_tweets,
+                    save=False,
+                    debug=False
+                )
+            finally:
+                os.chdir(previous_cwd)
 
             logger.debug("search_client.run() returned", extra={
                 "type": str(type(results)),
                 "full_results_str": str(results),
                 "count": len(results) if isinstance(results, list) else "N/A"
             })
-
-            if config.enable_debug:
-                try:
-                    logger.debug("Full search results:\n%s",
-                                 json.dumps(results, ensure_ascii=False, indent=2))
-                except Exception:
-                    logger.debug("Full search results (repr): %r", results)
 
         except Exception as exc:
             tb = traceback.format_exc()
